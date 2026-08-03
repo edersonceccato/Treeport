@@ -20,12 +20,12 @@ O que diferencia:
 
 ## Status
 
-🚧 Em construção, por fases. **Fase 1 concluída: árvore de fonte de dados.**
+🚧 Em construção, por fases. **Fase 2 concluída: já gera PDF.**
 
 | Fase | Escopo | Status |
 |---|---|---|
 | 1 | Árvore de dados, resolução master/detail, parâmetros, `Executor` | ✅ |
-| 2 | Renderização PDF básica (Header/Details/Footer, Label/Field) | ⬜ |
+| 2 | Renderização PDF básica (Header/Details/Footer, Label/Field) | ✅ |
 | 3 | Motor de expressões `{{...}}` | ⬜ |
 | 4 | Subreports aninhados | ⬜ |
 | 5 | Auto-grow em cascata | ⬜ |
@@ -46,7 +46,52 @@ O que diferencia:
 `core` e `designer` não dependem um do outro em runtime: compartilham só o
 schema JSON do `Template`/`DataSourceTree` como contrato.
 
-## Exemplo mínimo (Fase 1)
+## Exemplo mínimo: do banco ao PDF
+
+```ts
+import { generateReport } from '@treeport/core';
+import type { DataSourceTree, Template } from '@treeport/schema';
+
+const tree: DataSourceTree = {
+  id: 'fee-tree',
+  name: 'Taxas',
+  parameters: [{ name: 'offerId', type: 'int', nullable: false }],
+  root: { id: 'FEE', name: 'Taxas', sql: 'SELECT * FROM offer_fee WHERE offer_id = :offerId' },
+};
+
+const template: Template = {
+  id: 'fee-list',
+  name: 'Relatório de Taxas',
+  boundDataSourceNodeId: 'FEE',
+  pageSize: 'A4',
+  bands: {
+    header: {
+      height: 30,
+      elements: [{
+        id: 't', type: 'label', x: 0, y: 0, width: 400, height: 20,
+        content: 'Relatório de Taxas', style: { fontSize: 16, bold: true },
+      }],
+    },
+    details: {
+      height: 18,
+      elements: [
+        { id: 'n', type: 'field', x: 0, y: 0, width: 300, height: 12, fieldName: 'name' },
+        {
+          id: 'v', type: 'field', x: 320, y: 0, width: 120, height: 12,
+          fieldName: 'amount', format: '#,##0.00', style: { align: 'right' },
+        },
+      ],
+    },
+  },
+};
+
+const pdf = await generateReport(tree, template, executor, { parameters: { offerId: 10 } });
+await writeFile('taxas.pdf', pdf);
+```
+
+Header e footer repetem em toda página, os detalhes quebram de página sozinhos.
+
+## Só a árvore de dados
 
 ```ts
 import { MemoryExecutor, resolveDataSourceTree } from '@treeport/core';
@@ -107,15 +152,17 @@ pnpm install
 pnpm test            # roda a suíte (Vitest)
 pnpm typecheck       # TypeScript em modo estrito
 pnpm build           # compila os pacotes
-pnpm example:phase1  # roda o exemplo da Fase 1
+pnpm example:phase1  # árvore de dados de 3 níveis (imprime no console)
+pnpm example:phase2  # gera um PDF de 2 páginas em examples/output/
 ```
 
 ## Documentação
 
 - [Fonte de dados](docs/data-source.md) — árvore master/detail, parâmetros, adapters
+- [Template](docs/template-schema.md) — bandas, elementos, estilos, máscaras de formato
 
-Os demais documentos (`template-schema.md`, `expressions.md`, `subreports.md`,
-`storage.md`, `designer-ui.md`) entram junto com as fases correspondentes.
+Os demais documentos (`expressions.md`, `subreports.md`, `storage.md`,
+`designer-ui.md`) entram junto com as fases correspondentes.
 
 ## Licença
 
