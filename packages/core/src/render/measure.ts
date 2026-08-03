@@ -43,6 +43,20 @@ export interface MeasureContext {
  * desenho, então não adianta medir mais que isso.
  */
 export function measureElement(element: ReportElement, context: MeasureContext): number {
+  if (element.hidden) return 0;
+
+  if (element.type === 'region') {
+    if (!element.autoHeight) return element.height;
+
+    let bottom = element.height;
+    for (const child of element.elements) {
+      const used = measureElement(child, context);
+      const childBottom = child.y + used;
+      if (childBottom > bottom) bottom = childBottom;
+    }
+    return bottom;
+  }
+
   if (element.type === 'subreport') {
     // repassa fontes/escopo para o subreport medir o texto dele também
     return measureSubreport(element, context.resolvedRow, {

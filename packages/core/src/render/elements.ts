@@ -1,6 +1,7 @@
 import type { PDFFont } from 'pdf-lib';
 import type {
   BarcodeElement,
+  RegionElement,
   ElementStyle,
   FieldElement,
   ImageElement,
@@ -89,7 +90,13 @@ export async function renderElement(
   absoluteY: number,
   context: RenderElementContext,
 ): Promise<number> {
+  // `hidden` some do PDF também, não só do designer
+  if (element.hidden) return 0;
+
   switch (element.type) {
+    case 'region':
+      return renderRegion(element, absoluteY, context);
+
     case 'label':
       return renderText(resolveLabelText(element, context), element, absoluteY, context);
 
@@ -358,6 +365,48 @@ function resolveCodeValue(expression: string, context: RenderElementContext): st
 
   const value = evaluateExpression(expression, scope, context.expressionOptions ?? {});
   return formatValue(value);
+}
+
+/**
+ * Desenha uma região: o fundo/borda dela e depois os filhos, cujas
+ * coordenadas são RELATIVAS ao canto superior esquerdo da região.
+ *
+ * Devolve a altura ocupada. Com `autoHeight`, cresce para caber um filho que
+ * tenha transbordado — é o que faz uma caixa de totais acompanhar o conteúdo.
+ */
+async function renderRegion(
+  element: RegionElement,
+  absoluteY: number,
+  context: RenderElementContext,
+): Promise<number> {
+  const style = element.style;
+
+  if (style?.backgroundColor !== undefined || (style?.borderWidth ?? 0) > 0) {
+    await context.ctx.drawRect({
+      x: element.x,
+      y: absoluteY,
+      width: element.width,
+      height: element.height,
+      fill: style?.backgroundColor,
+      borderColor: style?.borderColor,
+      borderWidth: style?.borderWidth,
+    });
+  }
+
+  let bottom = element.height;
+
+  for (const child of element.elements) {
+    if (child.hidden) continue;
+
+    // filho em coordenada relativa: soma a origem da região
+    const absoluteChild = { ...child, x: element.x + child.x } as ReportElement;
+    const used = await renderElement(absoluteChild, absoluteY + child.y, context);
+
+    const childBottom = child.y + used;
+    if (childBottom > bottom) bottom = childBottom;
+  }
+
+  return element.autoHeight ? Math.max(element.height, bottom) : element.height;
 }
 
 async function renderRect(

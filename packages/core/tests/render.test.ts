@@ -325,3 +325,135 @@ describe('renderReport', () => {
     expect(pdf.text).toContain('Armazenagem à vista');
   });
 });
+
+describe('região e visibilidade', () => {
+  it('desenha os filhos em coordenada relativa à região', async () => {
+    const bytes = await renderReport(
+      {
+        id: 't',
+        name: 'T',
+        boundDataSourceNodeId: 'N',
+        pageSize: 'A4',
+        margins: { top: 40, right: 40, bottom: 40, left: 40 },
+        bands: {
+          details: {
+            height: 120,
+            elements: [
+              {
+                id: 'reg',
+                type: 'region',
+                x: 100,
+                y: 30,
+                width: 300,
+                height: 60,
+                elements: [
+                  {
+                    id: 'dentro',
+                    type: 'label',
+                    x: 10,
+                    y: 10,
+                    width: 200,
+                    height: 14,
+                    content: 'Dentro',
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      dataSet([{}]),
+    );
+
+    const pdf = await inspectPdf(bytes);
+    const item = findItem(pdf.pages[0]!, 'Dentro')!;
+
+    // margem 40 + região 100 + filho 10
+    expect(item.x).toBeCloseTo(150, 0);
+  });
+
+  it('elemento hidden não sai no PDF', async () => {
+    const bytes = await renderReport(
+      {
+        id: 't',
+        name: 'T',
+        boundDataSourceNodeId: 'N',
+        pageSize: 'A4',
+        bands: {
+          details: {
+            height: 40,
+            elements: [
+              {
+                id: 'v',
+                type: 'label',
+                x: 0,
+                y: 0,
+                width: 200,
+                height: 14,
+                content: 'Visivel',
+              },
+              {
+                id: 'o',
+                type: 'label',
+                x: 0,
+                y: 18,
+                width: 200,
+                height: 14,
+                content: 'Oculto',
+                hidden: true,
+              },
+            ],
+          },
+        },
+      },
+      dataSet([{}]),
+    );
+
+    const pdf = await inspectPdf(bytes);
+    expect(pdf.text).toContain('Visivel');
+    expect(pdf.text).not.toContain('Oculto');
+  });
+
+  it('sys.pageNumber e sys.totalPages numeram as páginas', async () => {
+    const rows = Array.from({ length: 60 }, (_, i) => ({ n: i + 1 }));
+
+    const bytes = await renderReport(
+      {
+        id: 't',
+        name: 'T',
+        boundDataSourceNodeId: 'N',
+        pageSize: 'A4',
+        margins: { top: 40, right: 40, bottom: 40, left: 40 },
+        bands: {
+          footer: {
+            height: 20,
+            elements: [
+              {
+                id: 'p',
+                type: 'label',
+                x: 0,
+                y: 4,
+                width: 515,
+                height: 12,
+                content: 'Pagina {{sys.pageNumber}} de {{sys.totalPages}}',
+                style: { fontSize: 9 },
+              },
+            ],
+          },
+          details: {
+            height: 20,
+            elements: [
+              { id: 'l', type: 'label', x: 0, y: 0, width: 200, height: 14, content: '{{n}}' },
+            ],
+          },
+        },
+      },
+      dataSet(rows),
+    );
+
+    const pdf = await inspectPdf(bytes);
+    expect(pdf.pageCount).toBe(2);
+    expect(pdf.pages[0]!.text).toContain('Pagina 1 de 2');
+    expect(pdf.pages[1]!.text).toContain('Pagina 2 de 2');
+  });
+});

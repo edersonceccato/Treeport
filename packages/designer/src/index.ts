@@ -102,5 +102,14 @@ export {
 } from './model/api-client.js';
 export type { ApiClientOptions, TemplateSummary } from './model/api-client.js';
 
+export { SNIPPETS, findSnippet } from './model/snippets.js';
+export type { Snippet } from './model/snippets.js';
+
+export { snapToGuides, equalSpacingHints } from './model/smart-guides.js';
+export type { Guide, SnapResult, SmartSnapOptions } from './model/smart-guides.js';
+
+export { paginate, sampleRows } from './model/preview.js';
+export type { PreviewPage, PreviewBlock, PreviewOptions, PreviewResult } from './model/preview.js';
+
 // --- o Web Component ---
 export { TreeportDesigner } from './report-designer.js';

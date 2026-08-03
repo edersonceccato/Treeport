@@ -26,6 +26,75 @@ export type BandName = 'header' | 'details' | 'footer';
 export interface ElementLocation {
   band: BandName;
   index: number;
+  /** Quando presente, o elemento vive dentro desta região. */
+  parentRegionId?: string;
+}
+
+/** Acha um elemento pelo id dentro de um BandSet (usado sobre o draft). */
+function findElementIn(bands: BandSet, elementId: string): ReportElement | undefined {
+  const walk = (elements: ReportElement[]): ReportElement | undefined => {
+    for (const element of elements) {
+      if (element.id === elementId) return element;
+      if (element.type === 'region') {
+        const found = walk(element.elements);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  };
+
+  for (const name of ['header', 'details', 'footer'] as BandName[]) {
+    const band = bands[name];
+    if (!band) continue;
+    const found = walk(band.elements);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/**
+ * Remove de uma vez todos os elementos cujos ids estão no conjunto e devolve
+ * os removidos. Fazer isso num passo só evita o problema clássico de índices
+ * invalidados por remoções anteriores.
+ */
+function removeElementsIn(bands: BandSet, ids: Set<string>): ReportElement[] {
+  const removed: ReportElement[] = [];
+
+  const walk = (elements: ReportElement[]): void => {
+    for (let i = elements.length - 1; i >= 0; i -= 1) {
+      const element = elements[i]!;
+      if (ids.has(element.id)) {
+        removed.unshift(...elements.splice(i, 1));
+        continue;
+      }
+      if (element.type === 'region') walk(element.elements);
+    }
+  };
+
+  for (const name of ['header', 'details', 'footer'] as BandName[]) {
+    const band = bands[name];
+    if (band) walk(band.elements);
+  }
+  return removed;
+}
+
+/** Busca recursiva por id, entrando nas regiões. */
+function locateIn(
+  elements: ReportElement[],
+  elementId: string,
+  parentRegionId?: string,
+): { index: number; parentRegionId?: string } | undefined {
+  const index = elements.findIndex((e) => e.id === elementId);
+  if (index >= 0) {
+    return parentRegionId === undefined ? { index } : { index, parentRegionId };
+  }
+
+  for (const element of elements) {
+    if (element.type !== 'region') continue;
+    const found = locateIn(element.elements, elementId, element.id);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 export interface TemplateEditorOptions {
@@ -209,20 +278,129 @@ export class TemplateEditor {
     return out;
   }
 
-  /** Localiza um elemento pelo id, em qualquer banda. */
+  /**
+   * Localiza um elemento pelo id, em qualquer banda.
+   * `parentRegionId` indica quando o elemento vive dentro de uma região.
+   */
   locate(elementId: string): ElementLocation | undefined {
     for (const { name, band } of this.bands()) {
-      const index = band.elements.findIndex((e) => e.id === elementId);
-      if (index >= 0) return { band: name, index };
+      const found = locateIn(band.elements, elementId);
+      if (found) return { band: name, ...found };
     }
     return undefined;
   }
 
-  /** O elemento com aquele id, se existir. */
+  /** O elemento com aquele id, se existir (inclusive dentro de regiões). */
   element(elementId: string): ReportElement | undefined {
     const at = this.locate(elementId);
     if (!at) return undefined;
-    return this.designBands()[at.band]!.elements[at.index];
+    return this.containerOf(this.designBands(), at)[at.index];
+  }
+
+  /** A lista onde o elemento vive: a banda, ou os filhos de uma região. */
+  private containerOf(bands: BandSet, at: ElementLocation): ReportElement[] {
+    const band = bands[at.band]!;
+    if (!at.parentRegionId) return band.elements;
+
+    const region = locateIn(band.elements, at.parentRegionId);
+    if (!region) return band.elements;
+
+    const found = region.parentRegionId
+      ? this.containerOf(bands, { band: at.band, ...region })[region.index]
+      : band.elements[region.index];
+
+    return found && found.type === 'region' ? found.elements : band.elements;
+  }
+
+  // --- regiões --------------------------------------------------------------
+
+  /**
+   * Move elementos para dentro de uma região, convertendo as coordenadas para
+   * relativas — é o que faz arrastar a região levar tudo junto.
+   */
+  groupIntoRegion(elementIds: string[], regionId: string): boolean {
+    const region = this.element(regionId);
+    if (!region || region.type !== 'region') return false;
+
+    const targets = elementIds
+      .filter((id) => id !== regionId)
+      .map((id) => this.element(id))
+      .filter((e): e is ReportElement => e !== undefined);
+
+    if (targets.length === 0) return false;
+
+    const ids = targets.map((t) => t.id);
+
+    this.commit((draft) => {
+      const bands = this.designBands(draft);
+
+      // a região DENTRO do draft: é nela que os filhos entram
+      const regionInDraft = findElementIn(bands, regionId);
+      if (!regionInDraft || regionInDraft.type !== 'region') return;
+
+      // Remove tudo de uma vez e só então insere. Localizar por índice a cada
+      // passo não funcionaria: o primeiro splice invalida os índices seguintes.
+      const removed = removeElementsIn(bands, new Set(ids));
+
+      for (const element of removed) {
+        // absoluto -> relativo à região
+        element.x -= regionInDraft.x;
+        element.y -= regionInDraft.y;
+        regionInDraft.elements.push(element);
+      }
+    });
+
+    return true;
+  }
+
+  /** Tira um elemento da região, devolvendo-o à banda em coordenada absoluta. */
+  ungroupFromRegion(elementId: string): boolean {
+    const at = this.locate(elementId);
+    if (!at?.parentRegionId) return false;
+
+    const region = this.element(at.parentRegionId);
+    if (!region || region.type !== 'region') return false;
+
+    this.commit((draft) => {
+      const bands = this.designBands(draft);
+      const [removed] = removeElementsIn(bands, new Set([elementId]));
+      if (!removed) return;
+
+      // relativo -> absoluto
+      removed.x += region.x;
+      removed.y += region.y;
+      bands[at.band]!.elements.push(removed);
+    });
+
+    return true;
+  }
+
+  /** Duplica um elemento, deslocado alguns pontos para não ficar por cima. */
+  duplicateElement(elementId: string, offset = 10): string | undefined {
+    const element = this.element(elementId);
+    if (!element) return undefined;
+
+    const at = this.locate(elementId)!;
+    const copy = JSON.parse(JSON.stringify(element)) as ReportElement;
+    copy.id = this.uniqueId(`${element.id}-copia`);
+    copy.x += offset;
+    copy.y += offset;
+
+    this.commit((draft) => {
+      this.containerOf(this.designBands(draft), at).push(copy);
+    });
+
+    return copy.id;
+  }
+
+  /** Trava/destrava (o travado não é selecionável no canvas). */
+  setLocked(elementId: string, locked: boolean): boolean {
+    return this.updateElement(elementId, { locked } as Partial<ReportElement>);
+  }
+
+  /** Mostra/oculta — o oculto some do designer E do PDF. */
+  setHidden(elementId: string, hidden: boolean): boolean {
+    return this.updateElement(elementId, { hidden } as Partial<ReportElement>);
   }
 
   // --- mutações -------------------------------------------------------------
@@ -249,7 +427,7 @@ export class TemplateEditor {
     if (!at) return false;
 
     this.commit((draft) => {
-      this.designBands(draft)[at.band]!.elements.splice(at.index, 1);
+      this.containerOf(this.designBands(draft), at).splice(at.index, 1);
     });
     // apagar um subreport fecha a aba dele, se estava aberta
     this.path = nearestValidPath(this.current, this.path);
@@ -262,7 +440,7 @@ export class TemplateEditor {
     if (!at) return false;
 
     this.commit((draft) => {
-      const target = this.designBands(draft)[at.band]!.elements[at.index]!;
+      const target = this.containerOf(this.designBands(draft), at)[at.index]!;
       // `type` e `id` não mudam por patch: trocar o tipo exige recriar o
       // elemento, senão sobrariam campos do tipo antigo
       const { type: _type, id: _id, ...rest } = patch as Record<string, unknown>;
@@ -352,7 +530,7 @@ export class TemplateEditor {
     if (!at) return false;
 
     this.commit((draft) => {
-      apply(this.designBands(draft)[at.band]!.elements, at.index);
+      apply(this.containerOf(this.designBands(draft), at), at.index);
     });
     return true;
   }
@@ -381,7 +559,7 @@ export class TemplateEditor {
     this.commit((draft) => {
       for (const { id } of targets) {
         const at = this.locate(id)!;
-        const target = this.designBands(draft)[at.band]!.elements[at.index]!;
+        const target = this.containerOf(this.designBands(draft), at)[at.index]!;
 
         switch (mode) {
           case 'left':
@@ -429,7 +607,7 @@ export class TemplateEditor {
       sorted.forEach((element, i) => {
         if (i === 0 || i === sorted.length - 1) return;
         const at = this.locate(element.id)!;
-        this.designBands(draft)[at.band]!.elements[at.index]![key] = first[key] + step * i;
+        this.containerOf(this.designBands(draft), at)[at.index]![key] = first[key] + step * i;
       });
     });
 

@@ -75,7 +75,10 @@ Todo elemento tem a base:
   id: string;
   x: number; y: number; width: number; height: number;
   style?: ElementStyle;
-  canGrow?: boolean;   // pode crescer e empurrar o que está abaixo (Fase 5)
+  canGrow?: boolean;   // pode crescer e empurrar o que está abaixo
+  hidden?: boolean;    // some do designer E do PDF
+  locked?: boolean;    // não selecionável no designer; ignorado na geração
+  name?: string;       // nome amigável no painel de camadas
 }
 ```
 
@@ -152,6 +155,24 @@ Numa linha horizontal vale a `width`; numa vertical, a `height`.
 
 Tem suas próprias bandas e aninha em profundidade livre.
 Ver [subreports.md](subreports.md).
+
+#### `region` — agrupa elementos
+
+```json
+{
+  "id": "bloco",
+  "type": "region",
+  "x": 0, "y": 0, "width": 240, "height": 80,
+  "autoHeight": true,
+  "elements": [
+    { "id": "t", "type": "label", "x": 8, "y": 8, "width": 200, "height": 14, "content": "..." }
+  ]
+}
+```
+
+Os filhos guardam `x`/`y` **relativos ao canto superior esquerdo da região** —
+mover a região move tudo junto. Com `autoHeight`, ela cresce para caber o
+conteúdo.
 
 #### `barcode`, `qrcode` e `image`
 

@@ -46,6 +46,12 @@ export interface ExpressionScope {
   parent?: ExpressionScope;
   /** Parâmetros do relatório, visíveis em qualquer nível. */
   parameters?: Record<string, unknown>;
+  /**
+   * Variáveis resolvidas pelo motor, não vindas da consulta:
+   * `pageNumber`, `totalPages`, `now`. Ficam sob `sys.` para nunca colidirem
+   * com um nome de coluna.
+   */
+  system?: Record<string, unknown>;
 }
 
 export interface EvaluateOptions {
@@ -127,6 +133,14 @@ function rootParameters(scope: ExpressionScope): Record<string, unknown> | undef
   return undefined;
 }
 
+/** As variáveis de sistema declaradas em qualquer nível da corrente. */
+function rootSystem(scope: ExpressionScope): Record<string, unknown> | undefined {
+  for (let s: ExpressionScope | undefined = scope; s; s = s.parent) {
+    if (s.system) return s.system;
+  }
+  return undefined;
+}
+
 function availableFields(scope: ExpressionScope): string[] {
   const names = new Set<string>();
   for (let s: ExpressionScope | undefined = scope; s; s = s.parent) {
@@ -145,6 +159,17 @@ function evaluateMember(
   scope: ExpressionScope,
   options: EvaluateOptions,
 ): unknown {
+  // sys.pageNumber, sys.totalPages, sys.now
+  if (objectNode.kind === 'identifier' && objectNode.name === 'sys') {
+    const system = rootSystem(scope);
+    if (system && hasField(system, property)) return system[property];
+    if (options.strict === false) return null;
+    throw new ExpressionEvaluationError(
+      `Variável de sistema "sys.${property}" não existe. ` +
+        `Disponíveis: ${Object.keys(system ?? {}).join(', ') || '(nenhuma)'}.`,
+    );
+  }
+
   const target = resolveScopeExpression(objectNode, scope);
 
   if (target) {
@@ -191,6 +216,10 @@ function resolveScopeExpression(
   scope: ExpressionScope,
 ): ExpressionScope | undefined {
   if (node.kind === 'identifier') {
+    if (node.name === 'sys') {
+      // `sys` não é um escopo de linha: é resolvido em evaluateMember
+      return undefined;
+    }
     if (node.name === 'current') return scope;
     if (node.name === 'parent') {
       if (!scope.parent) {

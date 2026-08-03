@@ -82,6 +82,14 @@ export const PALETTE: PaletteItem[] = [
     defaultHeight: 80,
   },
   {
+    type: 'region',
+    label: 'Região',
+    icon: '⬚',
+    hint: 'Agrupa elementos: mover a região move tudo junto',
+    defaultWidth: 240,
+    defaultHeight: 80,
+  },
+  {
     type: 'subreport',
     label: 'Subrelatório',
     icon: '⊞',
@@ -163,5 +171,15 @@ function withTypeDefaults(
 
     case 'table':
       return { ...base, type, columns: [], rowHeight: 16 };
+
+    case 'region':
+      return {
+        ...base,
+        type,
+        elements: [],
+        canGrow: true,
+        autoHeight: true,
+        style: { borderColor: '#94a3b8', borderWidth: 1 },
+      };
   }
 }

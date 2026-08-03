@@ -38,6 +38,11 @@ export interface RenderOptions {
   expressionOptions?: EvaluateOptions;
   /** Densidade e legenda dos códigos de barras/QR. */
   barcodeOptions?: BarcodeRenderOptions;
+  /**
+   * Total de páginas já conhecido, usado internamente na segunda passada de
+   * renderização quando o template usa `sys.totalPages`.
+   */
+  totalPagesHint?: number;
 }
 
 /** Margens padrão (~1,76cm), próximas do que um relatório A4 costuma usar. */
@@ -58,6 +63,12 @@ export async function renderReport(
   doc.setTitle(options.title ?? template.name);
   if (options.author) doc.setAuthor(options.author);
   doc.setCreator('Treeport');
+
+  // `sys.totalPages` só é conhecido depois de paginar. Renderizamos uma vez
+  // para descobrir o total e, se algum elemento usa a variável, uma segunda
+  // vez com o valor correto — é o mesmo truque que os motores clássicos usam.
+  const usesTotalPages = templateUsesTotalPages(template);
+  let totalPagesHint = options.totalPagesHint ?? 1;
 
   const { width, height } = pageDimensions(template);
   const margins = template.margins ?? DEFAULT_MARGINS;
@@ -91,6 +102,12 @@ export async function renderReport(
     scope: {
       current: row,
       ...(options.parameters ? { parameters: options.parameters } : {}),
+      system: {
+        pageNumber: pageCtx.pages,
+        // só se sabe o total ao terminar; a 2a passada corrige (ver abaixo)
+        totalPages: totalPagesHint,
+        now: new Date(),
+      },
     },
     renderSubreport,
     ...(resolvedRow ? { resolvedRow } : {}),
@@ -146,7 +163,18 @@ export async function renderReport(
   }
 
   await ctx.finish();
+
+  if (usesTotalPages && options.totalPagesHint === undefined && ctx.pages !== totalPagesHint) {
+    // segunda passada, agora sabendo quantas páginas o documento tem
+    return renderReport(template, dataSet, { ...options, totalPagesHint: ctx.pages });
+  }
+
   return doc.save();
+}
+
+/** O template referencia `sys.totalPages` em algum lugar? */
+function templateUsesTotalPages(template: Template): boolean {
+  return JSON.stringify(template).includes('totalPages');
 }
 
 /**

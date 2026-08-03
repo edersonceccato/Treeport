@@ -165,6 +165,26 @@ atual ganha — use `parent.` para ser explícito.
 
 `parent` fora de um subreport é erro, com mensagem dizendo isso.
 
+## Variáveis de sistema
+
+Resolvidas pelo motor, não vindas da consulta. Ficam sob `sys.` para nunca
+colidirem com um nome de coluna:
+
+| Variável | O que é |
+|---|---|
+| `sys.pageNumber` | Número da página atual |
+| `sys.totalPages` | Total de páginas do documento |
+| `sys.now` | Data e hora da geração |
+
+```
+Página {{sys.pageNumber}} de {{sys.totalPages}}
+Emitido em {{FORMAT(sys.now, 'dd/MM/yyyy HH:mm')}}
+```
+
+Usar `sys.totalPages` faz o motor renderizar duas vezes — a primeira para
+contar as páginas, a segunda com o número certo. Só acontece quando o template
+realmente usa a variável.
+
 ## Parâmetros do relatório
 
 Os parâmetros ficam visíveis pelo nome, em qualquer nível:

@@ -34,6 +34,15 @@ export interface BaseElement {
    * Default: false, para não pagar o custo de reflow onde não é preciso.
    */
   canGrow?: boolean;
+  /**
+   * Elemento travado no designer: não é selecionável nem arrastável.
+   * Ignorado pelo motor de renderização — é só apoio à edição.
+   */
+  locked?: boolean;
+  /** Oculto no designer E na geração do PDF. */
+  hidden?: boolean;
+  /** Nome amigável, mostrado no painel de camadas. */
+  name?: string;
 }
 
 /** Texto estático ou expressão `{{...}}` avaliada em runtime. */
@@ -113,7 +122,26 @@ export interface SubreportElement extends BaseElement {
   template: BandSet;
 }
 
+/**
+ * Agrupa elementos numa área. Os filhos guardam `x`/`y` **relativos ao canto
+ * superior esquerdo da região**, então mover a região move tudo junto sem
+ * recalcular nada.
+ *
+ * Serve para blocos que andam juntos (um bloco de endereço, uma caixa de
+ * totais) e para o que precisa de fundo/borda em volta de vários elementos.
+ */
+export interface RegionElement extends BaseElement {
+  type: 'region';
+  elements: ReportElement[];
+  /**
+   * A região cresce para caber o conteúdo que transbordou.
+   * Combina com `canGrow` para empurrar o que vem depois dela.
+   */
+  autoHeight?: boolean;
+}
+
 export type ReportElement =
+  | RegionElement
   | LabelElement
   | FieldElement
   | ImageElement
@@ -171,6 +199,16 @@ export interface ReportContextRef {
 }
 
 /** Dimensões em pontos PDF dos tamanhos de página nomeados. */
+/**
+ * Variáveis de sistema disponíveis nas expressões de qualquer template.
+ * Resolvidas na renderização, não vêm da consulta.
+ */
+export interface SystemVariables {
+  pageNumber: number;
+  totalPages: number;
+  now: Date;
+}
+
 export const PAGE_SIZES: Record<NamedPageSize, { width: number; height: number }> = {
   A4: { width: 595.28, height: 841.89 },
   Letter: { width: 612, height: 792 },
