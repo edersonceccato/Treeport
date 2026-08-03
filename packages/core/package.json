@@ -1,0 +1,23 @@
+{
+  "name": "@treeport/core",
+  "version": "0.1.0",
+  "description": "Motor de relatórios do Treeport: árvore de dados, expressões e renderização PDF. Roda no backend.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "typecheck": "tsc -b tsconfig.json"
+  },
+  "dependencies": {
+    "@treeport/schema": "workspace:*"
+  },
+  "license": "MIT"
+}

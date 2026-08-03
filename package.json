@@ -1,0 +1,19 @@
+{
+  "name": "treeport-monorepo",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.1.1",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "pnpm -r typecheck",
+    "example:phase1": "vite-node packages/core/examples/proposal-offer-fees.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vite-node": "^6.0.0",
+    "vitest": "^2.1.8"
+  }
+}

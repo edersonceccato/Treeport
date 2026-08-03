@@ -1,0 +1,122 @@
+# Treeport
+
+Motor de relatórios estilo *Report Builder* (SSRS / FastReport / JasperReports)
+nativo em TypeScript, para Node e web.
+
+A ideia central é a mesma dos Report Builders clássicos: uma **árvore de fonte de
+dados** (uma query master, com queries detail recursivas penduradas nela), um
+**template de layout** organizado em bandas, e um motor que junta os dois e
+cospe um PDF.
+
+O que diferencia:
+
+- **Agnóstico de banco.** Você escreve seu SQL e injeta um adapter de um método
+  só. Postgres, SQL Server, Firebird, SQLite, MySQL ou uma API HTTP — o `core`
+  não conhece driver nenhum.
+- **Agnóstico de framework de UI.** O designer visual é um Web Component: roda
+  igual em React, Vue, Angular, Next.js ou HTML puro.
+- **Subreports aninhados em profundidade livre**, que é o que falta na maioria
+  das libs de PDF em JS.
+
+## Status
+
+🚧 Em construção, por fases. **Fase 1 concluída: árvore de fonte de dados.**
+
+| Fase | Escopo | Status |
+|---|---|---|
+| 1 | Árvore de dados, resolução master/detail, parâmetros, `Executor` | ✅ |
+| 2 | Renderização PDF básica (Header/Details/Footer, Label/Field) | ⬜ |
+| 3 | Motor de expressões `{{...}}` | ⬜ |
+| 4 | Subreports aninhados | ⬜ |
+| 5 | Auto-grow em cascata | ⬜ |
+| 6 | Barcode e QRCode | ⬜ |
+| 7 | Metadados de controle (`__block`, `__templateId`) e contexto | ⬜ |
+| 8 | Adapters de banco reais (Postgres primeiro) | ⬜ |
+| 9 | Designer visual web (Web Component) | ⬜ |
+| 10 | Persistência e documentação final | ⬜ |
+
+## Pacotes
+
+| Pacote | Onde roda | Para que serve |
+|---|---|---|
+| `@treeport/schema` | qualquer lugar | Tipos e validação compartilhados — a "spec" |
+| `@treeport/core` | backend | Árvore de dados, expressões, renderização PDF |
+| `@treeport/designer` | frontend | Designer drag-and-drop (Web Component) |
+
+`core` e `designer` não dependem um do outro em runtime: compartilham só o
+schema JSON do `Template`/`DataSourceTree` como contrato.
+
+## Exemplo mínimo (Fase 1)
+
+```ts
+import { MemoryExecutor, resolveDataSourceTree } from '@treeport/core';
+import type { DataSourceTree } from '@treeport/schema';
+
+const tree: DataSourceTree = {
+  id: 'proposal-tree',
+  name: 'Proposta comercial',
+  parameters: [{ name: 'proposalId', type: 'int', nullable: false }],
+  root: {
+    id: 'PROPOSAL',
+    name: 'Proposta',
+    sql: 'SELECT * FROM proposal WHERE id = :proposalId',
+    children: [
+      {
+        id: 'OFFER',
+        name: 'Ofertas',
+        sql: 'SELECT * FROM offer WHERE proposal_id IN (:parentValues)',
+        linkFields: { parentField: 'id', childField: 'proposalId' },
+      },
+    ],
+  },
+};
+
+const dataSet = await resolveDataSourceTree(tree, executor, {
+  parameters: { proposalId: 1 },
+});
+
+for (const proposal of dataSet.rows) {
+  console.log(proposal.data['customer']);
+  for (const offer of proposal.children['OFFER'] ?? []) {
+    console.log('  ', offer.data['route']);
+  }
+}
+```
+
+Conectando num banco de verdade, o `executor` é só isto:
+
+```ts
+import { Pool } from 'pg';
+import { normalizeNamedParameters, buildPositionalValues } from '@treeport/core';
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+const executor = {
+  async execute(sql: string, params: Record<string, unknown>) {
+    const { sql: text, order } = normalizeNamedParameters(sql, 'numbered');
+    const { rows } = await pool.query(text, buildPositionalValues(order, params));
+    return rows;
+  },
+};
+```
+
+## Desenvolvimento
+
+```bash
+pnpm install
+pnpm test            # roda a suíte (Vitest)
+pnpm typecheck       # TypeScript em modo estrito
+pnpm build           # compila os pacotes
+pnpm example:phase1  # roda o exemplo da Fase 1
+```
+
+## Documentação
+
+- [Fonte de dados](docs/data-source.md) — árvore master/detail, parâmetros, adapters
+
+Os demais documentos (`template-schema.md`, `expressions.md`, `subreports.md`,
+`storage.md`, `designer-ui.md`) entram junto com as fases correspondentes.
+
+## Licença
+
+MIT

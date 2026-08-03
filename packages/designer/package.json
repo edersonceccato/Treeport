@@ -1,0 +1,8 @@
+{
+  "name": "@treeport/designer",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Designer visual drag-and-drop do Treeport (Web Component). Entra na Fase 9.",
+  "type": "module",
+  "license": "MIT"
+}
