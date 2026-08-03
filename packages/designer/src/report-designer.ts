@@ -28,6 +28,7 @@ import {
   type ExplorerNode,
 } from './model/field-explorer.js';
 import { snapToGuides, type Guide } from './model/smart-guides.js';
+import { icons, iconForType } from './model/icons.js';
 import {
   evaluateExpression,
   formatValue,
@@ -76,6 +77,7 @@ export class TreeportDesigner extends LitElement {
     explorerNodeId: { state: true },
     editingId: { state: true },
     codeVersion: { state: true },
+    contextMenu: { state: true },
   };
 
   declare template: Template;
@@ -99,6 +101,8 @@ export class TreeportDesigner extends LitElement {
   declare editingId: string;
   /** Sobe quando um código é gerado, para forçar o redesenho. */
   declare codeVersion: number;
+  /** Menu do botão direito (item 17). */
+  declare contextMenu: { x: number; y: number; elementId: string } | undefined;
 
   private editor!: TemplateEditor;
   private selfAssigned = false;
@@ -140,6 +144,7 @@ export class TreeportDesigner extends LitElement {
     this.explorerNodeId = '';
     this.editingId = '';
     this.codeVersion = 0;
+    this.contextMenu = undefined;
     this.editor = new TemplateEditor(this.template, {
       onChange: (t) => this.handleChange(t),
     });
@@ -500,6 +505,7 @@ export class TreeportDesigner extends LitElement {
   }
 
   private onCanvasPointerDown(): void {
+    this.contextMenu = undefined;
     if (this.selectedIds.length > 0) {
       this.selectedIds = [];
       this.emitSelection();
@@ -561,9 +567,18 @@ export class TreeportDesigner extends LitElement {
     if (!band) return;
 
     const element = create(0, 0);
-    // centraliza na largura e põe num terço da altura da banda
-    const x = snapTo(Math.max(0, (this.contentWidth - element.width) / 2), this.gridSize);
-    const y = snapTo(Math.max(0, Math.min(band.height / 3, band.height - element.height)), this.gridSize);
+
+    // alinhado à esquerda e no topo livre da banda: centralizar deixava os
+    // componentes tortos e fora das regiões (item 1)
+    const ocupado = band.elements.reduce(
+      (max, e) => Math.max(max, e.y + e.height),
+      0,
+    );
+    const x = 0;
+    const y = snapTo(
+      Math.max(0, Math.min(ocupado + 4, Math.max(0, band.height - element.height))),
+      this.gridSize,
+    );
 
     this.addAndSelect(this.activeBand, { ...element, x, y } as ReportElement);
   }
@@ -691,8 +706,126 @@ export class TreeportDesigner extends LitElement {
           </main>
           ${this.mode === 'design' ? this.renderRightPanel() : ''}
         </div>
+        ${this.renderContextMenu()}
       </div>
     `;
+  }
+
+  /** Menu do botão direito sobre um elemento (item 17). */
+  private renderContextMenu(): TemplateResult | string {
+    const menu = this.contextMenu;
+    if (!menu) return '';
+
+    const element = this.editor.element(menu.elementId);
+    if (!element) return '';
+
+    const close = () => (this.contextMenu = undefined);
+    const item = (
+      label: string,
+      iconMarkup: string,
+      action: () => void,
+      disabled = false,
+    ): TemplateResult => html`
+      <button
+        class="ctx-item"
+        ?disabled=${disabled}
+        @click=${() => {
+          action();
+          close();
+        }}
+      >
+        <span class="ctx-icon">${icon(iconMarkup)}</span>${label}
+      </button>
+    `;
+
+    const inRegion = this.editor.locate(element.id)?.parentRegionId;
+
+    return html`
+      <div class="ctx-backdrop" @pointerdown=${close} @contextmenu=${close}></div>
+      <div class="ctx-menu" style="left:${menu.x}px; top:${menu.y}px">
+        ${item('Renomear…', icons.pencil, () => this.renameElement(element.id))}
+        ${item(
+          element.hidden ? 'Mostrar' : 'Ocultar',
+          element.hidden ? icons.eye : icons.eyeOff,
+          () => {
+            this.editor.setHidden(element.id, !element.hidden);
+            this.requestUpdate();
+          },
+        )}
+        ${item(
+          element.locked ? 'Destravar' : 'Travar',
+          element.locked ? icons.unlock : icons.lock,
+          () => {
+            this.editor.setLocked(element.id, !element.locked);
+            this.requestUpdate();
+          },
+        )}
+        <div class="ctx-sep"></div>
+        ${item('Duplicar', icons.copy, () => this.duplicateSelection())}
+        ${item('Trazer para frente', icons.bringFront, () => {
+          this.editor.bringToFront(element.id);
+          this.requestUpdate();
+        })}
+        ${item('Enviar para trás', icons.sendBack, () => {
+          this.editor.sendToBack(element.id);
+          this.requestUpdate();
+        })}
+        <div class="ctx-sep"></div>
+        ${item(
+          'Agrupar seleção',
+          icons.group,
+          () => this.groupSelection(),
+          this.selection.length < 2,
+        )}
+        ${inRegion
+          ? item('Tirar da região', icons.ungroup, () => this.ungroup(element.id))
+          : ''}
+        <div class="ctx-sep"></div>
+        ${this.bandMoveItems(element.id, item)}
+        <div class="ctx-sep"></div>
+        ${item('Excluir', icons.trash, () => {
+          this.editor.removeElement(element.id);
+          this.selectedIds = this.selectedIds.filter((id) => id !== element.id);
+          this.emitSelection();
+        })}
+      </div>
+    `;
+  }
+
+  /** Opções de mover o elemento para outra banda (item 14). */
+  private bandMoveItems(
+    elementId: string,
+    item: (label: string, iconMarkup: string, action: () => void, disabled?: boolean) => TemplateResult,
+  ): TemplateResult {
+    const atual = this.editor.locate(elementId)?.band;
+    const nomes: Record<BandName, string> = {
+      header: 'cabeçalho',
+      details: 'detalhe',
+      footer: 'rodapé',
+    };
+
+    return html`${this.editor
+      .bands()
+      .filter(({ name }) => name !== atual)
+      .map(({ name }) =>
+        item(`Mover para o ${nomes[name]}`, icons.move, () => {
+          this.editor.moveToBand(elementId, name);
+          this.activeBand = name;
+          this.requestUpdate();
+        }),
+      )}`;
+  }
+
+  /** Renomeia um elemento (itens 8 e 15). */
+  private renameElement(elementId: string): void {
+    const element = this.editor.element(elementId);
+    if (!element) return;
+
+    const atual = element.name ?? '';
+    const novo = prompt('Nome do elemento', atual);
+    if (novo === null) return;
+
+    this.patch(elementId, { name: novo.trim() || undefined });
   }
 
   private renderTopBar(): TemplateResult {
@@ -722,8 +855,12 @@ export class TreeportDesigner extends LitElement {
               <div class="toolgroup right">${this.zoomSelect()}</div>`
           : html`
               <div class="toolgroup">
-                <button data-tip="Desfazer (Ctrl+Z)" @click=${() => this.undo()}>↶</button>
-                <button data-tip="Refazer (Ctrl+Shift+Z)" @click=${() => this.redo()}>↷</button>
+                <button data-tip="Desfazer (Ctrl+Z)" @click=${() => this.undo()}>
+                  ${icon(icons.undo)}
+                </button>
+                <button data-tip="Refazer (Ctrl+Shift+Z)" @click=${() => this.redo()}>
+                  ${icon(icons.redo)}
+                </button>
               </div>
 
               <div class="toolgroup">
@@ -773,7 +910,7 @@ export class TreeportDesigner extends LitElement {
                   ?disabled=${!active}
                   @click=${() => this.applyStyle({ bold: !style.bold })}
                 >
-                  <b>B</b>
+                  ${icon(icons.bold)}
                 </button>
                 <button
                   class="toggle ${style.italic ? 'on' : ''}"
@@ -781,7 +918,7 @@ export class TreeportDesigner extends LitElement {
                   ?disabled=${!active}
                   @click=${() => this.applyStyle({ italic: !style.italic })}
                 >
-                  <i>I</i>
+                  ${icon(icons.italic)}
                 </button>
                 <label class="color" data-tip="Cor do texto">
                   <input
@@ -810,19 +947,19 @@ export class TreeportDesigner extends LitElement {
               <div class="toolgroup">
                 ${(
                   [
-                    ['left', '⬅'],
-                    ['center', '↔'],
-                    ['right', '➡'],
+                    ['left', icons.alignLeft],
+                    ['center', icons.alignCenter],
+                    ['right', icons.alignRight],
                   ] as const
                 ).map(
-                  ([align, icon]) => html`
+                  ([align, iconMarkup]) => html`
                     <button
                       class="toggle ${style.align === align ? 'on' : ''}"
                       data-tip=${`Alinhar texto à ${align === 'left' ? 'esquerda' : align === 'center' ? 'ao centro' : 'direita'}`}
                       ?disabled=${!active}
                       @click=${() => this.applyStyle({ align })}
                     >
-                      ${icon}
+                      ${icon(iconMarkup)}
                     </button>
                   `,
                 )}
@@ -947,7 +1084,7 @@ export class TreeportDesigner extends LitElement {
                   this.onDragStart(e, item.type, 'text/treeport-element')}
                 @click=${() => this.insertAtActiveBand((x, y) => createElement(item.type, x, y))}
               >
-                <span class="icon">${item.icon}</span>
+                <span class="icon">${icon(iconForType(item.type))}</span>
                 <span class="label">${item.label}</span>
               </div>
             `,
@@ -1044,16 +1181,34 @@ export class TreeportDesigner extends LitElement {
             ? `${element.name}${tab.dataSourceNodeId ? ` · ${tab.dataSourceNodeId}` : ''}`
             : nome;
 
+          const raiz = tab.path.length === 0;
+
           return html`
             <button
-              class="subtab ${active ? 'active' : ''}"
-              data-tip=${completo}
+              class="subtab ${active ? 'active' : ''} ${raiz ? 'root' : ''}"
+              data-tip=${raiz ? 'Design principal' : completo}
+              draggable=${!raiz}
               @click=${() => this.openDesign(tab.path)}
               @dblclick=${() => {
-                // duplo clique na aba renomeia (item 2)
-                if (!element) return;
-                const novo = prompt('Nome do subrelatório', element.name ?? '');
-                if (novo !== null) this.patch(element.id, { name: novo.trim() || undefined });
+                if (element) this.renameElement(element.id);
+              }}
+              @contextmenu=${(e: MouseEvent) => {
+                if (raiz || !element) return;
+                e.preventDefault();
+                this.contextMenu = { x: e.clientX, y: e.clientY, elementId: element.id };
+              }}
+              @dragstart=${(e: DragEvent) => {
+                if (raiz) return;
+                e.dataTransfer?.setData('text/treeport-tab', tab.path.join('/'));
+              }}
+              @dragover=${(e: DragEvent) => {
+                // a principal nunca sai do primeiro lugar (item 10)
+                if (!raiz) e.preventDefault();
+              }}
+              @drop=${(e: DragEvent) => {
+                e.preventDefault();
+                const origem = e.dataTransfer?.getData('text/treeport-tab');
+                if (origem) this.reorderTabs(origem, tab.path.join('/'));
               }}
             >
               ${tab.depth > 0 ? '↳ ' : ''}${shortLabel(nome)}
@@ -1062,6 +1217,32 @@ export class TreeportDesigner extends LitElement {
         })}
       </nav>
     `;
+  }
+
+  /**
+   * Reordena as abas trocando a posição dos subrelatórios na banda.
+   *
+   * Só funciona entre irmãos: mover um subrelatório para dentro de outro
+   * mudaria a hierarquia dos dados, o que é outra operação.
+   */
+  private reorderTabs(fromKey: string, toKey: string): void {
+    if (fromKey === toKey || fromKey === '' || toKey === '') return;
+
+    const from = fromKey.split('/');
+    const to = toKey.split('/');
+
+    // irmãos têm o mesmo caminho até o penúltimo nível
+    if (from.slice(0, -1).join('/') !== to.slice(0, -1).join('/')) return;
+
+    const fromId = from[from.length - 1]!;
+    const toId = to[to.length - 1]!;
+
+    const at = this.editor.locate(fromId);
+    const target = this.editor.locate(toId);
+    if (!at || !target || at.band !== target.band) return;
+
+    this.editor.reorderElement(fromId, target.index);
+    this.requestUpdate();
   }
 
   private renderRuler(): TemplateResult {
@@ -1140,8 +1321,8 @@ export class TreeportDesigner extends LitElement {
     offsetX: number,
     offsetY: number,
   ): TemplateResult | string {
-    if (element.hidden) return '';
-
+    // o oculto continua visível no designer, esmaecido — assim o usuário sabe
+    // que ele existe e consegue selecioná-lo de volta (item 17)
     const selected = this.selectedIds.includes(element.id);
     const z = this.zoom;
     const x = offsetX + element.x;
@@ -1151,10 +1332,16 @@ export class TreeportDesigner extends LitElement {
       <div
         class="element type-${element.type} ${selected ? 'selected' : ''} ${element.locked
           ? 'locked'
-          : ''}"
+          : ''} ${element.hidden ? 'is-hidden' : ''}"
         style="left:${x * z}px; top:${y * z}px; width:${element.width * z}px;
                height:${Math.max(element.height, 2) * z}px; ${elementStyle(element)}"
         @pointerdown=${(e: PointerEvent) => this.onElementPointerDown(e, element, band, 'move')}
+        @contextmenu=${(e: MouseEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!this.selectedIds.includes(element.id)) this.select([element.id]);
+          this.contextMenu = { x: e.clientX, y: e.clientY, elementId: element.id };
+        }}
         @dblclick=${(e: MouseEvent) => {
           e.stopPropagation();
           if (element.type === 'subreport') {
@@ -1450,10 +1637,161 @@ export class TreeportDesigner extends LitElement {
             Tirar da região
           </button>`
         : ''}
+
+      ${this.renderRelativeProps(el)} ${this.renderRulesProps(el)}
+    `;
+  }
+
+  /** Posição relativa a outro elemento (item 18). */
+  private renderRelativeProps(el: ReportElement): TemplateResult {
+    const relative = el.relativeTo;
+    const irmaos = (this.editor.band(this.activeBand)?.elements ?? []).filter(
+      (e) => e.id !== el.id,
+    );
+
+    return html`
+      <details class="advanced" ?open=${relative !== undefined}>
+        <summary>Posição relativa</summary>
+        <p class="tip">
+          Se o elemento de referência não aparecer (escondido por regra, ou uma
+          lista sem linhas), este sobe e ocupa o lugar dele.
+        </p>
+
+        <label class="row">
+          <span>Depois de</span>
+          <select
+            @change=${(e: Event) => {
+              const id = (e.target as HTMLSelectElement).value;
+              this.patch(el.id, {
+                relativeTo: id
+                  ? { elementId: id, placement: relative?.placement ?? 'below', gap: relative?.gap ?? 0 }
+                  : undefined,
+              });
+            }}
+          >
+            <option value="" ?selected=${!relative}>(posição fixa)</option>
+            ${irmaos.map(
+              (e) => html`<option value=${e.id} ?selected=${e.id === relative?.elementId}>
+                ${e.name ?? elementLabel(e) ?? e.id}
+              </option>`,
+            )}
+          </select>
+        </label>
+
+        ${relative
+          ? html`
+              <label class="row">
+                <span>Espaço</span>
+                <input
+                  type="number"
+                  min="0"
+                  .value=${String(relative.gap ?? 0)}
+                  @change=${(e: Event) =>
+                    this.patch(el.id, {
+                      relativeTo: {
+                        ...relative,
+                        gap: Number((e.target as HTMLInputElement).value),
+                      },
+                    })}
+                />
+              </label>
+            `
+          : ''}
+      </details>
+    `;
+  }
+
+  /** Regras condicionais (item 19). */
+  private renderRulesProps(el: ReportElement): TemplateResult {
+    const rules = el.rules ?? [];
+
+    const update = (index: number, patch: Record<string, unknown>): void => {
+      const novas = rules.map((r, i) => (i === index ? { ...r, ...patch } : r));
+      this.patch(el.id, { rules: novas });
+    };
+
+    return html`
+      <details class="advanced" ?open=${rules.length > 0}>
+        <summary>Regras condicionais (${rules.length})</summary>
+        <p class="tip">
+          A primeira regra que der verdadeira é a que vale. Ex.:
+          <code>total &lt; 0</code>, <code>ISNULL(observacao)</code>,
+          <code>SUM(ITENS.valor) &gt; 1000</code>
+        </p>
+
+        ${rules.map(
+          (rule, index) => html`
+            <div class="rule">
+              <div class="rule-head">
+                <span>Regra ${index + 1}</span>
+                <button
+                  class="layer-btn"
+                  data-tip="Remover regra"
+                  @click=${() =>
+                    this.patch(el.id, { rules: rules.filter((_, i) => i !== index) })}
+                >
+                  ${icon(icons.trash)}
+                </button>
+              </div>
+
+              <label class="row stacked">
+                <span>Quando</span>
+                <input
+                  placeholder="total < 0"
+                  .value=${rule.when}
+                  @change=${(e: Event) =>
+                    update(index, { when: (e.target as HTMLInputElement).value })}
+                />
+              </label>
+
+              <label class="check">
+                <input
+                  type="checkbox"
+                  .checked=${rule.hide ?? false}
+                  @change=${(e: Event) =>
+                    update(index, { hide: (e.target as HTMLInputElement).checked })}
+                />
+                Esconder o elemento
+              </label>
+
+              <label class="row stacked">
+                <span>Trocar conteúdo por</span>
+                <input
+                  placeholder="(deixe vazio para manter)"
+                  .value=${rule.content ?? ''}
+                  @change=${(e: Event) =>
+                    update(index, {
+                      content: (e.target as HTMLInputElement).value || undefined,
+                    })}
+                />
+              </label>
+
+              <div class="prop-grid">
+                ${this.colorField('Cor', rule.style?.color ?? '#000000', (v) =>
+                  update(index, { style: { ...rule.style, color: v } }),
+                )}
+                ${this.colorField('Fundo', rule.style?.backgroundColor ?? '#ffffff', (v) =>
+                  update(index, { style: { ...rule.style, backgroundColor: v } }),
+                )}
+              </div>
+            </div>
+          `,
+        )}
+
+        <button
+          class="wide"
+          @click=${() => this.patch(el.id, { rules: [...rules, { when: '' }] })}
+        >
+          Adicionar regra
+        </button>
+      </details>
     `;
   }
 
   private renderPageProperties(): TemplateResult {
+    // dentro de um subrelatório, as propriedades são dele, não da página
+    if (this.designPath.length > 0) return this.renderSubreportProperties();
+
     const m = this.margins;
 
     return html`
@@ -1462,16 +1800,42 @@ export class TreeportDesigner extends LitElement {
       <label class="row">
         <span>Tamanho</span>
         <select
-          .value=${typeof this.template.pageSize === 'string' ? this.template.pageSize : 'A4'}
-          @change=${(e: Event) =>
-            this.editor.updateTemplate({
-              pageSize: (e.target as HTMLSelectElement).value as 'A4' | 'Letter',
-            })}
+          @change=${(e: Event) => this.onPageSizeChange((e.target as HTMLSelectElement).value)}
         >
-          <option value="A4">A4 · 210×297mm</option>
-          <option value="Letter">Letter</option>
+          ${PAGE_PRESETS.map(
+            (preset) => html`<option
+              value=${preset.id}
+              ?selected=${preset.id === this.currentPagePreset()}
+            >
+              ${preset.label}
+            </option>`,
+          )}
+          <option value="custom" ?selected=${this.currentPagePreset() === 'custom'}>
+            Personalizado…
+          </option>
         </select>
       </label>
+
+      ${this.currentPagePreset() === 'custom'
+        ? html`
+            <div class="prop-grid">
+              ${this.numberField('Largura (pt)', this.pageSize.width, (v) =>
+                this.editor.updateTemplate({
+                  pageSize: { width: v, height: this.pageSize.height },
+                }),
+              )}
+              ${this.numberField('Altura (pt)', this.pageSize.height, (v) =>
+                this.editor.updateTemplate({
+                  pageSize: { width: this.pageSize.width, height: v },
+                }),
+              )}
+            </div>
+            <p class="tip">
+              ${ptToMm(this.pageSize.width).toFixed(0)} ×
+              ${ptToMm(this.pageSize.height).toFixed(0)} mm
+            </p>
+          `
+        : ''}
 
       <label class="row">
         <span>Orientação</span>
@@ -1518,6 +1882,87 @@ export class TreeportDesigner extends LitElement {
         `,
       )}
       <p class="tip">Também dá para arrastar a borda inferior de cada banda na folha.</p>
+
+      <div class="prop-title spaced">Bandas da página</div>
+      ${(['header', 'footer'] as const).map(
+        (name) => html`
+          <label class="check">
+            <input
+              type="checkbox"
+              .checked=${this.editor.band(name) !== undefined}
+              @change=${(e: Event) => {
+                this.editor.toggleBand(name, (e.target as HTMLInputElement).checked);
+                this.requestUpdate();
+              }}
+            />
+            ${name === 'header' ? 'Cabeçalho' : 'Rodapé'}
+          </label>
+        `,
+      )}
+      <p class="tip">O detalhe é obrigatório: é ele que repete por linha.</p>
+    `;
+  }
+
+  /** Propriedades do subrelatório aberto: nome e bandas (itens 8 e 9). */
+  private renderSubreportProperties(): TemplateResult {
+    const elementId = this.designPath[this.designPath.length - 1]!;
+    const element = this.editor.element(elementId);
+
+    return html`
+      <div class="prop-title">Subrelatório</div>
+
+      <label class="row">
+        <span>Nome</span>
+        <input
+          .value=${element?.name ?? ''}
+          placeholder="ex.: Itens"
+          @change=${(e: Event) =>
+            this.patch(elementId, {
+              name: (e.target as HTMLInputElement).value.trim() || undefined,
+            })}
+        />
+      </label>
+
+      <div class="prop-title spaced">Bandas</div>
+      <p class="tip">
+        O cabeçalho aparece uma vez com os títulos; o detalhe repete por linha;
+        o rodapé fecha com os totais.
+      </p>
+
+      ${(['header', 'footer'] as const).map(
+        (name) => html`
+          <label class="check">
+            <input
+              type="checkbox"
+              .checked=${this.editor.band(name) !== undefined}
+              @change=${(e: Event) => {
+                this.editor.toggleBand(name, (e.target as HTMLInputElement).checked);
+                this.requestUpdate();
+              }}
+            />
+            ${name === 'header' ? 'Cabeçalho' : 'Rodapé'}
+          </label>
+        `,
+      )}
+
+      <div class="prop-title spaced">Altura (pt)</div>
+      ${this.editor.bands().map(
+        ({ name, band }) => html`
+          <label class="row">
+            <span>${{ header: 'Cabeçalho', details: 'Detalhe', footer: 'Rodapé' }[name]}</span>
+            <input
+              type="number"
+              .value=${String(Math.round(band.height))}
+              @change=${(e: Event) =>
+                this.editor.setBandHeight(name, Number((e.target as HTMLInputElement).value))}
+            />
+          </label>
+        `,
+      )}
+
+      <button class="wide" @click=${() => this.openDesign(this.designPath.slice(0, -1))}>
+        Voltar ao design de cima
+      </button>
     `;
   }
 
@@ -1947,46 +2392,54 @@ export class TreeportDesigner extends LitElement {
         class="layer ${selected ? 'selected' : ''}"
         style="padding-left:${6 + depth * 12}px"
         @click=${() => this.select([element.id])}
+        @dblclick=${() => this.renameElement(element.id)}
+        @contextmenu=${(e: MouseEvent) => {
+          e.preventDefault();
+          this.select([element.id]);
+          this.contextMenu = { x: e.clientX, y: e.clientY, elementId: element.id };
+        }}
       >
-        <span class="layer-icon">${typeIcon(element.type)}</span>
-        <span class="layer-name" title=${element.id}>${elementLabel(element)}</span>
+        <span class="layer-icon">${icon(iconForType(element.type))}</span>
+        <span class="layer-name" title=${element.id}>
+          ${element.name ?? elementLabel(element)}
+        </span>
 
         <button
           class="layer-btn"
-          title=${element.hidden ? 'Mostrar' : 'Ocultar'}
+          data-tip=${element.hidden ? 'Mostrar' : 'Ocultar'}
           @click=${(e: Event) => {
             e.stopPropagation();
             this.editor.setHidden(element.id, !element.hidden);
             this.requestUpdate();
           }}
         >
-          ${element.hidden ? '◌' : '◉'}
+          ${icon(element.hidden ? icons.eyeOff : icons.eye)}
         </button>
         <button
           class="layer-btn"
-          title=${element.locked ? 'Destravar' : 'Travar'}
+          data-tip=${element.locked ? 'Destravar' : 'Travar'}
           @click=${(e: Event) => {
             e.stopPropagation();
             this.editor.setLocked(element.id, !element.locked);
             this.requestUpdate();
           }}
         >
-          ${element.locked ? '🔒' : '🔓'}
+          ${icon(element.locked ? icons.lock : icons.unlock)}
         </button>
         <button
           class="layer-btn"
-          title="Duplicar"
+          data-tip="Duplicar"
           @click=${(e: Event) => {
             e.stopPropagation();
             const id = this.editor.duplicateElement(element.id);
             if (id) this.select([id]);
           }}
         >
-          ⧉
+          ${icon(icons.copy)}
         </button>
         <button
           class="layer-btn"
-          title="Excluir"
+          data-tip="Excluir"
           @click=${(e: Event) => {
             e.stopPropagation();
             this.editor.removeElement(element.id);
@@ -1994,7 +2447,7 @@ export class TreeportDesigner extends LitElement {
             this.emitSelection();
           }}
         >
-          ✕
+          ${icon(icons.trash)}
         </button>
       </div>
       ${element.type === 'region'
@@ -2183,6 +2636,34 @@ export class TreeportDesigner extends LitElement {
   private allNodeIds(): string[] {
     if (!this.dataSource) return [];
     return flattenExplorer(describeTree(this.dataSource)).map(({ node }) => node.id);
+  }
+
+  /** Qual preset de página está ativo, ou 'custom'. */
+  private currentPagePreset(): string {
+    const size = this.template.pageSize;
+    if (typeof size === 'string') return size;
+
+    const match = PAGE_PRESETS.find(
+      (p) => p.width === size.width && p.height === size.height,
+    );
+    return match?.id ?? 'custom';
+  }
+
+  private onPageSizeChange(value: string): void {
+    if (value === 'custom') {
+      // ao entrar em personalizado, parte do tamanho atual
+      this.editor.updateTemplate({
+        pageSize: { width: this.pageSize.width, height: this.pageSize.height },
+      });
+      return;
+    }
+
+    const preset = PAGE_PRESETS.find((p) => p.id === value);
+    if (!preset) return;
+
+    this.editor.updateTemplate({
+      pageSize: preset.named ?? { width: preset.width, height: preset.height },
+    });
   }
 
   private patch(elementId: string, patch: Record<string, unknown>): void {
@@ -2630,8 +3111,14 @@ export class TreeportDesigner extends LitElement {
 
     .palette-item .icon,
     .snippet .icon {
+      display: inline-flex;
       font-size: 13px;
       color: var(--tp-muted);
+    }
+
+    .palette-item:hover .icon,
+    .snippet:hover .icon {
+      color: var(--tp-accent);
     }
 
     .palette-item .label,
@@ -2896,6 +3383,93 @@ export class TreeportDesigner extends LitElement {
     .element.locked {
       cursor: not-allowed;
       opacity: 0.7;
+    }
+
+    /* oculto: visível no designer, mas some do PDF */
+    .element.is-hidden {
+      opacity: 0.28;
+      filter: grayscale(1);
+    }
+
+    .element.is-hidden::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        45deg,
+        transparent,
+        transparent 4px,
+        rgba(100, 116, 139, 0.18) 4px,
+        rgba(100, 116, 139, 0.18) 8px
+      );
+      pointer-events: none;
+    }
+
+    .icon-svg {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 0;
+    }
+
+    /* menu do botão direito */
+    .ctx-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 998;
+    }
+
+    .ctx-menu {
+      position: fixed;
+      z-index: 999;
+      min-width: 190px;
+      padding: 4px;
+      background: var(--tp-bg);
+      border: 1px solid var(--tp-border);
+      border-radius: 8px;
+      box-shadow: 0 10px 34px rgba(15, 23, 42, 0.2);
+    }
+
+    .ctx-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      font: inherit;
+      font-size: 12px;
+      padding: 6px 8px;
+      border: none;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--tp-text);
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .ctx-item:hover:not(:disabled) {
+      background: var(--tp-accent-soft);
+      color: var(--tp-accent);
+    }
+
+    .ctx-item:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
+
+    .ctx-icon {
+      display: inline-flex;
+      width: 16px;
+      color: var(--tp-muted);
+    }
+
+    .ctx-item:hover:not(:disabled) .ctx-icon {
+      color: var(--tp-accent);
+    }
+
+    .ctx-sep {
+      height: 1px;
+      margin: 4px 6px;
+      background: var(--tp-border);
     }
 
     .element-label {
@@ -3195,6 +3769,23 @@ export class TreeportDesigner extends LitElement {
       padding-top: 6px;
     }
 
+    .rule {
+      border: 1px solid var(--tp-border);
+      border-radius: 6px;
+      padding: 7px;
+      margin-bottom: 6px;
+      background: var(--tp-bg);
+    }
+
+    .rule-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--tp-muted);
+      margin-bottom: 4px;
+    }
+
     .advanced summary {
       font-size: 10px;
       color: var(--tp-muted);
@@ -3255,9 +3846,9 @@ export class TreeportDesigner extends LitElement {
     }
 
     .layer-icon {
-      flex: 0 0 14px;
+      display: inline-flex;
+      flex: 0 0 16px;
       color: var(--tp-muted);
-      font-size: 10px;
     }
 
     .layer-name {
@@ -3268,11 +3859,13 @@ export class TreeportDesigner extends LitElement {
     }
 
     .layer-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       flex: 0 0 auto;
       font: inherit;
-      font-size: 9px;
-      width: 17px;
-      height: 17px;
+      width: 20px;
+      height: 20px;
       padding: 0;
       border: none;
       border-radius: 3px;
@@ -3638,6 +4231,35 @@ function norm(dx: number, dy: number): { x: number; y: number; length: number } 
 function fmt(point: [number, number]): string {
   return `${point[0].toFixed(2)} ${point[1].toFixed(2)}`;
 }
+
+/** Insere um ícone SVG. O conteúdo é nosso, não vem de dados do usuário. */
+function icon(markup: string): TemplateResult {
+  return html`<span class="icon-svg" .innerHTML=${markup}></span>`;
+}
+
+/**
+ * Tamanhos de página prontos (item 16).
+ *
+ * A4 e Letter são nomeados no schema; os demais viram medida explícita, que é
+ * o que o motor precisa para desenhar.
+ */
+const PAGE_PRESETS: {
+  id: string;
+  label: string;
+  width: number;
+  height: number;
+  named?: 'A4' | 'Letter';
+}[] = [
+  { id: 'A4', label: 'A4 · 210 × 297 mm', width: 595.28, height: 841.89, named: 'A4' },
+  { id: 'Letter', label: 'Letter · 216 × 279 mm', width: 612, height: 792, named: 'Letter' },
+  { id: 'A3', label: 'A3 · 297 × 420 mm', width: 841.89, height: 1190.55 },
+  { id: 'A5', label: 'A5 · 148 × 210 mm', width: 419.53, height: 595.28 },
+  { id: 'A6', label: 'A6 · 105 × 148 mm', width: 297.64, height: 419.53 },
+  { id: 'Legal', label: 'Ofício · 216 × 356 mm', width: 612, height: 1008 },
+  { id: 'Tabloid', label: 'Tabloide · 279 × 432 mm', width: 792, height: 1224 },
+  { id: 'Etiqueta', label: 'Etiqueta · 100 × 150 mm', width: 283.46, height: 425.2 },
+  { id: 'Cupom', label: 'Cupom 80 mm', width: 226.77, height: 1133.86 },
+];
 
 /** Encurta um rótulo longo, mantendo o começo, que é o que identifica. */
 function shortLabel(text: string, max = 18): string {

@@ -107,7 +107,11 @@ com a altura de cada uma etiquetada à direita.
 
 | Ação | Como |
 |---|---|
-| Criar elemento | Arraste da paleta para uma banda |
+| Criar elemento | Clique na paleta, ou arraste para a banda |
+| Menu de opções | Botão direito sobre o elemento |
+| Renomear | Duplo clique na camada, ou botão direito → Renomear |
+| Mover entre bandas | Botão direito → Mover para o cabeçalho/detalhe/rodapé |
+| Girar uma forma | Arraste a alça acima dela (Shift trava de 15 em 15°) |
 | Selecionar | Clique no elemento |
 | Selecionar vários | Shift + clique |
 | Mover | Arraste, ou use as setas |
@@ -168,6 +172,29 @@ o layout sem gerar PDF nem precisar de servidor.
 Não é o PDF final — fontes do browser e do pdf-lib diferem um pouco. Para o
 resultado exato, use `POST /report-templates/:id/preview`.
 
+## Regras condicionais
+
+Cada elemento aceita regras que mudam o que ele faz conforme os dados:
+
+| Quando | O que fazer |
+|---|---|
+| `total < 0` | esconder |
+| `total < 0` | trocar o conteúdo por `0,00` |
+| `situacao == 'ATRASADO'` | pintar de vermelho |
+| `SUM(ITENS.valor) > 1000` | negrito |
+
+A **primeira regra que der verdadeira é a que vale** — previsível de explicar, e
+evita a confusão de várias regras se sobrepondo. Uma condição que não compila é
+ignorada: uma regra quebrada não deve impedir a emissão do documento.
+
+## Posição relativa
+
+Um elemento pode se posicionar **depois de outro** em vez de numa coordenada
+fixa. Quando o de referência não aparece (escondido por regra, ou uma lista sem
+linhas), este sobe e ocupa o lugar dele em vez de deixar um buraco.
+
+Configurável em Propriedades → Posição relativa.
+
 ## Formas
 
 O componente **Forma** oferece retângulo, círculo/elipse, triângulo, losango,
@@ -216,9 +243,28 @@ Para combinar consultas diferentes, use o campo "Cálculo entre consultas":
 {{SUM('ITEM','valor') / COUNTDISTINCT('PEDIDO','cliente')}}   média por cliente
 ```
 
-Funções disponíveis: `SUM`, `COUNT`, `AVG`, `MINOF`, `MAXOF`,
-`COUNTDISTINCT`. O primeiro argumento é o id da consulta; com um argumento só,
-o Treeport descobre se é consulta ou campo comparando com a árvore.
+### Sintaxe
+
+```
+SUM(ITENS.valor_total)              soma um campo da consulta ITENS
+COUNT(PEDIDOS)                      quantas linhas PEDIDOS tem
+COUNTDISTINCT(PEDIDOS.cliente)      quantos clientes diferentes
+AVG(ITENS.valor_unitario)           média
+SUMDISTINCT(PEDIDOS.frete)          soma ignorando repetidos
+MINOF(ITENS.valor) / MAXOF(...)     menor e maior
+```
+
+Os nomes de consulta seguem o formato `MAIUSCULA_COM_UNDERSCORE` — "Itens do
+pedido" vira `ITENS_DO_PEDIDO`. Assim não é preciso aspas nem escapar acento.
+
+A forma antiga com aspas (`SUM('ITENS','valor')`) continua funcionando.
+
+### Combinando consultas
+
+```
+{{SUM(ITENS.valor) / COUNT(PEDIDOS)}}                    ticket médio
+{{SUM(ITENS.valor) / COUNTDISTINCT(PEDIDOS.cliente)}}    média por cliente
+```
 
 ## Componentes prontos
 

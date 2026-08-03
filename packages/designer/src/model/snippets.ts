@@ -366,6 +366,7 @@ export const SNIPPETS: Snippet[] = [
     create: (x, y) => ({
       id: id('assinatura'),
       type: 'region',
+      name: 'Assinatura',
       x,
       y,
       width: 220,

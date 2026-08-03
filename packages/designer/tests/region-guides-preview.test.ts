@@ -452,3 +452,80 @@ describe('formatos sugeridos por tipo de campo', () => {
     }
   });
 });
+
+// --- ajustes da terceira rodada de feedback -------------------------------
+
+describe('mover entre bandas', () => {
+  function editor(): TemplateEditor {
+    const e = new TemplateEditor(createEmptyTemplate());
+    e.addElement('header', {
+      id: 'a',
+      type: 'label',
+      x: 10,
+      y: 20,
+      width: 80,
+      height: 16,
+      content: 'A',
+    });
+    return e;
+  }
+
+  it('move o elemento para outra banda preservando x/y', () => {
+    const e = editor();
+
+    expect(e.moveToBand('a', 'footer')).toBe(true);
+    expect(e.locate('a')?.band).toBe('footer');
+    expect(e.element('a')).toMatchObject({ x: 10, y: 20 });
+  });
+
+  it('mover para a mesma banda não faz nada', () => {
+    expect(editor().moveToBand('a', 'header')).toBe(false);
+  });
+
+  it('sair de uma região devolve a coordenada absoluta', () => {
+    const e = new TemplateEditor(createEmptyTemplate());
+    e.addElement('details', {
+      id: 'x',
+      type: 'label',
+      x: 100,
+      y: 50,
+      width: 80,
+      height: 16,
+      content: 'X',
+    });
+    const regionId = e.addElement(
+      'details',
+      createElement('region', 100, 50, { width: 200, height: 60 } as never),
+    );
+    e.groupIntoRegion(['x'], regionId);
+
+    // dentro da região o x virou 0 (relativo)
+    expect(e.element('x')!.x).toBe(0);
+
+    e.moveToBand('x', 'footer');
+
+    // ao sair, volta a ser absoluto
+    expect(e.element('x')).toMatchObject({ x: 100, y: 50 });
+    expect(e.locate('x')?.parentRegionId).toBeUndefined();
+  });
+});
+
+describe('reordenar elementos', () => {
+  it('muda a posição na lista', () => {
+    const e = new TemplateEditor(createEmptyTemplate());
+    for (const id of ['a', 'b', 'c']) {
+      e.addElement('details', {
+        id,
+        type: 'label',
+        x: 0,
+        y: 0,
+        width: 50,
+        height: 12,
+        content: id,
+      });
+    }
+
+    e.reorderElement('c', 0);
+    expect(e.band('details')!.elements.map((x) => x.id)).toEqual(['c', 'a', 'b']);
+  });
+});

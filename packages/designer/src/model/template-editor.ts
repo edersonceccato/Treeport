@@ -375,6 +375,23 @@ export class TemplateEditor {
     return true;
   }
 
+  /** Move um elemento para outra posição na mesma lista (reordenar abas). */
+  reorderElement(elementId: string, targetIndex: number): boolean {
+    const at = this.locate(elementId);
+    if (!at) return false;
+
+    this.commit((draft) => {
+      const container = this.containerOf(this.designBands(draft), at);
+      const [element] = container.splice(at.index, 1);
+      if (!element) return;
+
+      const clamped = Math.max(0, Math.min(targetIndex, container.length));
+      container.splice(clamped, 0, element);
+    });
+
+    return true;
+  }
+
   /** Duplica um elemento, deslocado alguns pontos para não ficar por cima. */
   duplicateElement(elementId: string, offset = 10): string | undefined {
     const element = this.element(elementId);
@@ -391,6 +408,39 @@ export class TemplateEditor {
     });
 
     return copy.id;
+  }
+
+  /**
+   * Move um elemento para outra banda, preservando x/y (item 14).
+   *
+   * Sai de dentro de qualquer região antes, para não ficar com coordenada
+   * relativa a uma região que está noutra banda.
+   */
+  moveToBand(elementId: string, target: BandName): boolean {
+    const at = this.locate(elementId);
+    if (!at || at.band === target) return false;
+
+    const element = this.element(elementId);
+    if (!element) return false;
+
+    // se estava numa região, a coordenada precisa voltar a ser absoluta
+    const region = at.parentRegionId ? this.element(at.parentRegionId) : undefined;
+    const offsetX = region?.x ?? 0;
+    const offsetY = region?.y ?? 0;
+
+    this.commit((draft) => {
+      const bands = this.designBands(draft);
+      const [removed] = removeElementsIn(bands, new Set([elementId]));
+      if (!removed) return;
+
+      removed.x += offsetX;
+      removed.y += offsetY;
+
+      ensureBand(bands, target);
+      bands[target]!.elements.push(removed);
+    });
+
+    return true;
   }
 
   /** Trava/destrava (o travado não é selecionável no canvas). */
