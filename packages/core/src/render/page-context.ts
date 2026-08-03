@@ -1,4 +1,4 @@
-import type { PDFDocument, PDFFont, PDFPage } from 'pdf-lib';
+import type { PDFDocument, PDFFont, PDFImage, PDFPage } from 'pdf-lib';
 import { rgb } from 'pdf-lib';
 import type { PageMargins } from '@treeport/schema';
 import { parseColor } from './color.js';
@@ -47,6 +47,8 @@ export class PageContext {
   private readonly onPageStart: ((ctx: PageContext) => void | Promise<void>) | undefined;
   private readonly onPageEnd: ((ctx: PageContext) => void | Promise<void>) | undefined;
   private pageCount = 0;
+  /** Imagens já embutidas, para não duplicar os mesmos bytes no PDF. */
+  private readonly imageCache = new Map<string, PDFImage>();
 
   constructor(options: PageContextOptions) {
     this.doc = options.doc;
@@ -194,6 +196,56 @@ export class PageContext {
   }
 
   /**
+   * Desenha uma imagem (PNG ou JPEG) na caixa informada.
+   *
+   * `fit` decide o que fazer quando a proporção da imagem não bate com a da
+   * caixa: `contain` (default) preserva a proporção e centraliza, `fill`
+   * estica para preencher, `cover` preenche cortando o excesso.
+   */
+  async drawImage(opts: {
+    data: Uint8Array;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    fit?: 'contain' | 'cover' | 'fill' | undefined;
+  }): Promise<void> {
+    const page = await this.page();
+    const image = await this.embedImage(opts.data);
+
+    const box = fitBox(
+      { width: image.width, height: image.height },
+      { width: opts.width, height: opts.height },
+      opts.fit ?? 'contain',
+    );
+
+    page.drawImage(image, {
+      x: this.toPdfX(opts.x + box.offsetX),
+      y: this.toPdfY(opts.y + box.offsetY, box.height),
+      width: box.width,
+      height: box.height,
+    });
+  }
+
+  /**
+   * Embute a imagem no documento, reaproveitando quando os mesmos bytes já
+   * foram embutidos. Sem o cache, um código de barras repetido em 500 linhas
+   * viraria 500 cópias do PNG dentro do PDF.
+   */
+  private async embedImage(data: Uint8Array): Promise<PDFImage> {
+    const key = imageKey(data);
+    const cached = this.imageCache.get(key);
+    if (cached) return cached;
+
+    const image = isJpeg(data)
+      ? await this.doc.embedJpg(data)
+      : await this.doc.embedPng(data);
+
+    this.imageCache.set(key, image);
+    return image;
+  }
+
+  /**
    * Desenha uma linha de texto dentro de uma caixa, tratando alinhamento.
    * `y` é o topo da linha; o baseline é calculado a partir dele.
    */
@@ -218,4 +270,54 @@ export class PageContext {
       color: parseColor(opts.color, rgb(0, 0, 0)),
     });
   }
+}
+
+/** JPEG começa com os bytes FF D8 FF; qualquer outra coisa tratamos como PNG. */
+function isJpeg(data: Uint8Array): boolean {
+  return data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+}
+
+/**
+ * Chave de cache das imagens.
+ *
+ * Usa tamanho + uma amostra de bytes em vez de hash criptográfico: é barato e
+ * suficiente para o propósito (evitar reembutir a MESMA imagem), já que uma
+ * colisão exigiria dois PNGs de tamanho idêntico e mesmos bytes nas posições
+ * amostradas.
+ */
+function imageKey(data: Uint8Array): string {
+  const parts = [data.length];
+  const step = Math.max(1, Math.floor(data.length / 32));
+  for (let i = 0; i < data.length; i += step) parts.push(data[i]!);
+  return parts.join(',');
+}
+
+/**
+ * Calcula a caixa de desenho da imagem conforme o modo de encaixe.
+ * Devolve o tamanho final e o deslocamento dentro da caixa original.
+ */
+function fitBox(
+  image: { width: number; height: number },
+  box: { width: number; height: number },
+  fit: 'contain' | 'cover' | 'fill',
+): { width: number; height: number; offsetX: number; offsetY: number } {
+  if (fit === 'fill' || image.width === 0 || image.height === 0) {
+    return { width: box.width, height: box.height, offsetX: 0, offsetY: 0 };
+  }
+
+  const scale =
+    fit === 'cover'
+      ? Math.max(box.width / image.width, box.height / image.height)
+      : Math.min(box.width / image.width, box.height / image.height);
+
+  const width = image.width * scale;
+  const height = image.height * scale;
+
+  return {
+    width,
+    height,
+    // centraliza o que sobrar (ou o que transbordar, no caso do cover)
+    offsetX: (box.width - width) / 2,
+    offsetY: (box.height - height) / 2,
+  };
 }

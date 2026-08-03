@@ -13,6 +13,7 @@ import { measureBandContent } from './measure.js';
 import type { FontSet, RenderElementContext } from './elements.js';
 import type { FormatOptions } from './format.js';
 import type { EvaluateOptions } from '../expressions/evaluate.js';
+import type { BarcodeRenderOptions } from './barcode.js';
 
 /**
  * Motor de renderização (seção 7 do brief).
@@ -35,6 +36,8 @@ export interface RenderOptions {
   parameters?: Record<string, unknown>;
   /** Funções extras e modo estrito do motor de expressões. */
   expressionOptions?: EvaluateOptions;
+  /** Densidade e legenda dos códigos de barras/QR. */
+  barcodeOptions?: BarcodeRenderOptions;
 }
 
 /** Margens padrão (~1,76cm), próximas do que um relatório A4 costuma usar. */
@@ -93,6 +96,7 @@ export async function renderReport(
     ...(resolvedRow ? { resolvedRow } : {}),
     ...(options.formatOptions ? { formatOptions: options.formatOptions } : {}),
     ...(options.expressionOptions ? { expressionOptions: options.expressionOptions } : {}),
+    ...(options.barcodeOptions ? { barcodeOptions: options.barcodeOptions } : {}),
   });
 
   const ctx = new PageContext({

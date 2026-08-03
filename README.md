@@ -22,7 +22,7 @@ O que diferencia:
 
 ## Status
 
-🚧 Em construção, por fases. **Fase 5 concluída: auto-grow em cascata.**
+🚧 Em construção, por fases. **Fase 6 concluída: barcode, QR e imagens.**
 
 | Fase | Escopo | Status |
 |---|---|---|
@@ -31,7 +31,7 @@ O que diferencia:
 | 3 | Motor de expressões `{{...}}` | ✅ |
 | 4 | Subreports aninhados | ✅ |
 | 5 | Auto-grow em cascata | ✅ |
-| 6 | Barcode e QRCode | ⬜ |
+| 6 | Barcode e QRCode | ✅ |
 | 7 | Metadados de controle (`__block`, `__templateId`) e contexto | ⬜ |
 | 8 | Adapters de banco reais (Postgres primeiro) | ⬜ |
 | 9 | Designer visual web (Web Component) | ⬜ |
@@ -159,6 +159,7 @@ pnpm example:phase2  # gera um PDF de 2 páginas em examples/output/
 pnpm example:phase3  # PDF com labels calculados por expressão
 pnpm example:phase4  # proposta > ofertas > taxas/embalagens (3 níveis)
 pnpm example:phase5  # blocos que crescem e empurram o que vem depois
+pnpm example:phase6  # etiquetas com Code 128, EAN-13 e QR de rastreio
 ```
 
 ## Documentação
@@ -168,6 +169,7 @@ pnpm example:phase5  # blocos que crescem e empurram o que vem depois
 - [Expressões](docs/expressions.md) — sintaxe `{{...}}`, funções, escopo `parent`
 - [Subreports](docs/subreports.md) — nós aninhados, auto-grow, quebra de página
 - [Auto-grow](docs/auto-grow.md) — `canGrow`, deslocamento em cascata, medição
+- [Códigos e imagens](docs/barcodes.md) — barcode, QR Code, `ImageElement`
 
 Os demais documentos (`storage.md`, `designer-ui.md`) entram junto com as fases
 correspondentes.

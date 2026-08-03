@@ -153,12 +153,21 @@ Numa linha horizontal vale a `width`; numa vertical, a `height`.
 Tem suas próprias bandas e aninha em profundidade livre.
 Ver [subreports.md](subreports.md).
 
-### Ainda não implementados
+#### `barcode`, `qrcode` e `image`
 
-`image`, `barcode`, `qrcode` (Fase 6) e `table` já existem no schema, mas o
-motor ainda não os desenha. Um elemento não implementado **reserva o espaço
-dele** em vez de ser ignorado, então o layout ao redor continua correto
-enquanto a fase não chega.
+```json
+{ "type": "barcode", "format": "code128", "valueExpression": "code", "includeText": false }
+{ "type": "qrcode", "valueExpression": "{{'https://ex.com/' + id}}" }
+{ "type": "image", "source": "data:image/png;base64,...", "fit": "contain" }
+```
+
+Ver [barcodes.md](barcodes.md).
+
+### Ainda não implementado
+
+`table` já existe no schema, mas o motor ainda não o desenha. Um elemento não
+implementado **reserva o espaço dele** em vez de ser ignorado, então o layout ao
+redor continua correto enquanto a fase não chega.
 
 ## Estilo
 

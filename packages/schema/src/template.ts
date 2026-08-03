@@ -64,6 +64,11 @@ export interface BarcodeElement extends BaseElement {
   format: 'code128' | 'ean13' | 'code39';
   /** Nome de campo direto ou expressão `{{...}}`. */
   valueExpression: string;
+  /**
+   * Imprimir os dígitos legíveis abaixo das barras. Default: false.
+   * Uma etiqueta de EAN costuma mostrar; um código interno, não.
+   */
+  includeText?: boolean;
 }
 
 export interface QrCodeElement extends BaseElement {

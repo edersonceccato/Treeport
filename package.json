@@ -12,11 +12,15 @@
     "example:phase2": "vite-node packages/core/examples/fee-list-pdf.ts",
     "example:phase3": "vite-node packages/core/examples/expressions-pdf.ts",
     "example:phase4": "vite-node packages/core/examples/proposal-subreports-pdf.ts",
-    "example:phase5": "vite-node packages/core/examples/autogrow-pdf.ts"
+    "example:phase5": "vite-node packages/core/examples/autogrow-pdf.ts",
+    "example:phase6": "vite-node packages/core/examples/barcode-pdf.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "@types/pngjs": "^6.0.5",
+    "jsqr": "^1.4.0",
     "pdfjs-dist": "^6.2.108",
+    "pngjs": "^7.0.0",
     "typescript": "^5.7.2",
     "vite-node": "^6.0.0",
     "vitest": "^2.1.8"

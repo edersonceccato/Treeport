@@ -1,10 +1,13 @@
 import type { PDFFont } from 'pdf-lib';
 import type {
+  BarcodeElement,
   ElementStyle,
   FieldElement,
+  ImageElement,
   LabelElement,
   LineElement,
   RectElement,
+  QrCodeElement,
   ReportElement,
   ResolvedRow,
   SubreportElement,
@@ -14,6 +17,7 @@ import { formatValue, type FormatOptions } from './format.js';
 import { lineHeight, wrapText } from './text.js';
 import { interpolate, evaluateExpression } from '../expressions/interpolate.js';
 import { hasField } from '../expressions/evaluate.js';
+import { generateBarcode, generateQrCode, type BarcodeRenderOptions } from './barcode.js';
 import type { EvaluateOptions, ExpressionScope } from '../expressions/evaluate.js';
 
 /**
@@ -46,6 +50,8 @@ export interface RenderElementContext {
    */
   scope?: ExpressionScope;
   expressionOptions?: EvaluateOptions;
+  /** Densidade e legenda dos códigos de barras/QR. */
+  barcodeOptions?: BarcodeRenderOptions;
   /**
    * A linha resolvida completa (com os filhos aninhados). Só é necessária
    * quando a banda contém um `SubreportElement`, que precisa alcançar
@@ -102,9 +108,17 @@ export async function renderElement(
         ? context.renderSubreport(element, absoluteY, context)
         : element.height;
 
-    // Os demais tipos entram nas fases seguintes (imagem/barcode/qrcode na
-    // Fase 6, table depois). Ignorar em silêncio aqui seria pior que reservar
-    // o espaço: o layout continua correto.
+    case 'barcode':
+      return renderBarcode(element, absoluteY, context);
+
+    case 'qrcode':
+      return renderQrCode(element, absoluteY, context);
+
+    case 'image':
+      return renderImage(element, absoluteY, context);
+
+    // `table` entra depois; reservar o espaço é melhor que ignorar em
+    // silêncio, porque o layout ao redor continua correto.
     default:
       return element.height;
   }
@@ -229,6 +243,121 @@ async function renderText(
   }
 
   return usedHeight;
+}
+
+/**
+ * Desenha um código de barras.
+ *
+ * `valueExpression` pode ser um nome de campo direto ou uma expressão — a
+ * mesma flexibilidade do `fieldName` do Field.
+ */
+async function renderBarcode(
+  element: BarcodeElement,
+  absoluteY: number,
+  context: RenderElementContext,
+): Promise<number> {
+  const value = resolveCodeValue(element.valueExpression, context);
+  if (value === '') return element.height;
+
+  const png = await generateBarcode(element.format, value, element.height, {
+    ...(context.barcodeOptions ?? {}),
+    // o que o elemento declara ganha da opção global do relatório
+    ...(element.includeText === undefined ? {} : { includeText: element.includeText }),
+  });
+
+  await context.ctx.drawImage({
+    data: png,
+    x: element.x,
+    y: absoluteY,
+    width: element.width,
+    height: element.height,
+    fit: 'contain',
+  });
+
+  return element.height;
+}
+
+async function renderQrCode(
+  element: QrCodeElement,
+  absoluteY: number,
+  context: RenderElementContext,
+): Promise<number> {
+  const value = resolveCodeValue(element.valueExpression, context);
+  if (value === '') return element.height;
+
+  const png = await generateQrCode(value, context.barcodeOptions ?? {});
+
+  await context.ctx.drawImage({
+    data: png,
+    x: element.x,
+    y: absoluteY,
+    width: element.width,
+    height: element.height,
+    fit: 'contain',
+  });
+
+  return element.height;
+}
+
+/**
+ * Desenha uma imagem.
+ *
+ * `source` aceita data URI (`data:image/png;base64,...`) ou uma expressão que
+ * resolva para uma. O motor NÃO busca URL da rede: um relatório que depende de
+ * download externo fica lento e frágil, e a aplicação hospedeira sabe melhor
+ * que nós como buscar (com auth, cache, timeout) — ela passa os bytes prontos.
+ */
+async function renderImage(
+  element: ImageElement,
+  absoluteY: number,
+  context: RenderElementContext,
+): Promise<number> {
+  const source = element.source.includes('{{')
+    ? String(
+        evaluateExpression(element.source, resolveScope(context), context.expressionOptions ?? {}) ??
+          '',
+      )
+    : element.source;
+
+  const data = decodeImageSource(source);
+  if (!data) return element.height;
+
+  await context.ctx.drawImage({
+    data,
+    x: element.x,
+    y: absoluteY,
+    width: element.width,
+    height: element.height,
+    ...(element.fit ? { fit: element.fit } : {}),
+  });
+
+  return element.height;
+}
+
+/** Extrai os bytes de um data URI; devolve undefined para o que não souber ler. */
+function decodeImageSource(source: string): Uint8Array | undefined {
+  const match = /^data:image\/(png|jpe?g);base64,(.+)$/i.exec(source.trim());
+  if (!match) return undefined;
+
+  try {
+    return new Uint8Array(Buffer.from(match[2]!, 'base64'));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Valor de um barcode/QR: nome de campo direto ou expressão. */
+function resolveCodeValue(expression: string, context: RenderElementContext): string {
+  const scope = resolveScope(context);
+
+  // caminho rápido: nome de coluna cru, sem passar pelo parser
+  if (!expression.includes('{{')) {
+    const direct = lookupField(expression, context);
+    if (direct !== undefined) return formatValue(direct);
+  }
+
+  const value = evaluateExpression(expression, scope, context.expressionOptions ?? {});
+  return formatValue(value);
 }
 
 async function renderRect(

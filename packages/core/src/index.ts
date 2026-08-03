@@ -81,6 +81,13 @@ export type { FontSet, RenderElementContext } from './render/elements.js';
 export { PageContext } from './render/page-context.js';
 export type { PageContextOptions, TextBoxOptions } from './render/page-context.js';
 
+export {
+  generateBarcode,
+  generateQrCode,
+  BarcodeGenerationError,
+} from './render/barcode.js';
+export type { BarcodeFormat, BarcodeRenderOptions } from './render/barcode.js';
+
 export { formatValue, formatDate, formatNumber } from './render/format.js';
 export type { FormatOptions } from './render/format.js';
 
