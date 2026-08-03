@@ -1,4 +1,4 @@
-import type { DataRow } from '@treeport/schema';
+import type { DataRow } from '../data-source.js';
 import type { ExpressionNode } from './ast.js';
 import {
   BUILTIN_FUNCTIONS,
@@ -376,6 +376,22 @@ function evaluateCall(
     );
   }
 
+  /**
+   * Agregações aceitam `SUM(CONSULTA.campo)` sem aspas.
+   *
+   * Sem este tratamento, `CONSULTA.campo` seria avaliado como acesso a campo
+   * ANTES de chegar na função — e falharia, porque "CONSULTA" não é uma
+   * coluna da linha. Aqui a referência é passada como texto para a função de
+   * agregação resolver contra a árvore de dados.
+   */
+  if (AGGREGATE_NAMES.has(name)) {
+    const args = argNodes.map((arg) => {
+      const qualified = qualifiedName(arg);
+      return qualified ?? evaluateNode(arg, scope, options);
+    });
+    return fn(...args);
+  }
+
   // IF precisa de avaliação preguiçosa: só o ramo escolhido é avaliado, senão
   // IF(ISNULL(x), 0, 10/x) explodiria no ramo que nem seria usado
   if (name === 'IF' && argNodes.length === 3) {
@@ -386,6 +402,30 @@ function evaluateCall(
 
   const args = argNodes.map((arg) => evaluateNode(arg, scope, options));
   return fn(...args);
+}
+
+/** Funções cujos argumentos são referências à árvore, não valores. */
+const AGGREGATE_NAMES = new Set([
+  'SUM',
+  'COUNT',
+  'AVG',
+  'MINOF',
+  'MAXOF',
+  'COUNTDISTINCT',
+  'SUMDISTINCT',
+]);
+
+/**
+ * `CONSULTA` ou `CONSULTA.campo` escritos sem aspas, como texto.
+ * Devolve undefined para qualquer outra coisa (número, literal, conta).
+ */
+function qualifiedName(node: ExpressionNode): string | undefined {
+  if (node.kind === 'identifier') return node.name;
+
+  if (node.kind === 'member' && node.object.kind === 'identifier') {
+    return `${node.object.name}.${node.property}`;
+  }
+  return undefined;
 }
 
 /** Busca case-insensitive, para `upper()` funcionar igual a `UPPER()`. */

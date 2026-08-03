@@ -2,10 +2,10 @@ import type { Band, ReportElement, ResolvedRow } from '@treeport/schema';
 import type { FontSet } from './elements.js';
 import { pickFont } from './elements.js';
 import { measureSubreport } from './subreport.js';
-import { formatValue, type FormatOptions } from './format.js';
+import { formatValue, type FormatOptions } from '@treeport/schema';
 import { lineHeight, wrapText } from './text.js';
-import { interpolate, evaluateExpression } from '../expressions/interpolate.js';
-import { hasField, type EvaluateOptions, type ExpressionScope } from '../expressions/evaluate.js';
+import { interpolate, evaluateExpression } from '@treeport/schema';
+import { hasField, type EvaluateOptions, type ExpressionScope } from '@treeport/schema';
 
 /**
  * Medição de altura sem desenhar (Fase 5).

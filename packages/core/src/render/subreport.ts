@@ -2,8 +2,8 @@ import type { ResolvedRow, SubreportElement } from '@treeport/schema';
 import { renderBand } from './band.js';
 import type { FontSet, RenderElementContext } from './elements.js';
 import { measureBandContent, type MeasureContext } from './measure.js';
-import type { FormatOptions } from './format.js';
-import type { EvaluateOptions, ExpressionScope } from '../expressions/evaluate.js';
+import type { FormatOptions } from '@treeport/schema';
+import type { EvaluateOptions, ExpressionScope } from '@treeport/schema';
 
 /**
  * Renderização de subreports (Fase 4 / Anexo C do brief).

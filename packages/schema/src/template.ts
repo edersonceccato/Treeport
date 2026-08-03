@@ -62,6 +62,47 @@ export interface BaseElement {
   hidden?: boolean;
   /** Nome amigável, mostrado no painel de camadas. */
   name?: string;
+  /**
+   * Regras que mudam o elemento conforme os dados (item 19 do feedback).
+   *
+   * Avaliadas na ordem: a primeira cuja condição for verdadeira vence. É a
+   * forma de esconder um campo, trocar o texto ou pintar de vermelho sem
+   * precisar de código na aplicação.
+   */
+  rules?: ElementRule[];
+  /**
+   * Posição relativa a outro elemento (item 18 do feedback).
+   *
+   * Quando o elemento de referência não desenha nada (subrelatório sem linhas,
+   * campo escondido por regra), este ocupa o lugar dele em vez de deixar um
+   * buraco.
+   */
+  relativeTo?: RelativePosition;
+}
+
+/** Condição + o que fazer quando ela for verdadeira. */
+export interface ElementRule {
+  /**
+   * Expressão booleana, na mesma sintaxe dos labels.
+   * Ex.: `total < 0`, `ISNULL(observacao)`, `SUM(ITENS.valor) > 1000`
+   */
+  when: string;
+  /** Esconde o elemento. */
+  hide?: boolean;
+  /** Substitui o conteúdo (texto do label, valor do campo). */
+  content?: string;
+  /** Sobrescreve parte do estilo — cor, negrito, fundo. */
+  style?: ElementStyle;
+}
+
+/** Como um elemento se posiciona em relação a outro. */
+export interface RelativePosition {
+  /** Id do elemento de referência, na mesma banda. */
+  elementId: string;
+  /** Onde ficar em relação a ele. Default: abaixo. */
+  placement?: 'below' | 'right';
+  /** Espaço entre os dois, em pontos. Default: 0. */
+  gap?: number;
 }
 
 /** Texto estático ou expressão `{{...}}` avaliada em runtime. */

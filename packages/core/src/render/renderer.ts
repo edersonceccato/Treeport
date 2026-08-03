@@ -11,9 +11,9 @@ import { renderBand, measureBand } from './band.js';
 import { renderSubreport } from './subreport.js';
 import { measureBandContent } from './measure.js';
 import type { FontSet, RenderElementContext } from './elements.js';
-import type { FormatOptions } from './format.js';
-import type { EvaluateOptions } from '../expressions/evaluate.js';
-import { createAggregateFunctions } from '../expressions/aggregates.js';
+import type { FormatOptions } from '@treeport/schema';
+import type { EvaluateOptions } from '@treeport/schema';
+import { createAggregateFunctions } from '@treeport/schema';
 import type { BarcodeRenderOptions } from './barcode.js';
 
 /**

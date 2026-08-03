@@ -41,34 +41,40 @@ export {
   inferFieldNames,
 } from './data-source/navigation.js';
 
-// --- Motor de expressões ---
+// --- Motor de expressões (reexportado de @treeport/schema) ---
 export {
   interpolate,
   evaluateExpression,
   compileTemplate,
   hasPlaceholders,
   clearExpressionCache,
-} from './expressions/interpolate.js';
-export type { CompiledTemplate } from './expressions/interpolate.js';
-
-export { parseExpression } from './expressions/parser.js';
-export { tokenize, ExpressionSyntaxError } from './expressions/tokenizer.js';
-export type { Token, TokenType } from './expressions/tokenizer.js';
-
-export { evaluateNode, hasField, ExpressionEvaluationError } from './expressions/evaluate.js';
-export type { ExpressionScope, EvaluateOptions } from './expressions/evaluate.js';
-
-export { BUILTIN_FUNCTIONS, toBoolean, toNumber, toText } from './expressions/functions.js';
-export type { ExpressionFunction } from './expressions/functions.js';
-
-export type { ExpressionNode } from './expressions/ast.js';
+  parseExpression,
+  tokenize,
+  ExpressionSyntaxError,
+  evaluateNode,
+  hasField,
+  ExpressionEvaluationError,
+  BUILTIN_FUNCTIONS,
+  toBoolean,
+  toNumber,
+  toText,
+} from '@treeport/schema';
+export type {
+  CompiledTemplate,
+  Token,
+  TokenType,
+  ExpressionScope,
+  EvaluateOptions,
+  ExpressionFunction,
+  ExpressionNode,
+} from '@treeport/schema';
 
 export {
   createAggregateFunctions,
   collectRows,
   AGGREGATE_FUNCTION_NAMES,
-} from './expressions/aggregates.js';
-export type { AggregateContext } from './expressions/aggregates.js';
+} from '@treeport/schema';
+export type { AggregateContext } from '@treeport/schema';
 
 // --- Metadados de controle e contexto (Anexo A e B) ---
 export {
@@ -133,8 +139,8 @@ export { BARCODE_IDS, TWO_DIMENSIONAL } from './render/barcode.js';
 export { formatQrContent, QR_CONTENT_FIELDS, QR_VALUE_LABEL } from './render/qr-content.js';
 export type { QrContentParts } from './render/qr-content.js';
 
-export { formatValue, formatDate, formatNumber } from './render/format.js';
-export type { FormatOptions } from './render/format.js';
+export { formatValue, formatDate, formatNumber } from '@treeport/schema';
+export type { FormatOptions } from '@treeport/schema';
 
 export { wrapText, measure, lineHeight } from './render/text.js';
 export { parseColor } from './render/color.js';

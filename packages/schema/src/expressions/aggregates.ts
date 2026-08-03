@@ -1,4 +1,4 @@
-import type { ResolvedRow } from '@treeport/schema';
+import type { ResolvedRow } from '../data-source.js';
 import { toNumber } from './functions.js';
 
 /**
@@ -111,6 +111,14 @@ export function createAggregateFunctions(
     }
     if (first === undefined) return {};
 
+    // forma preferida: SUM(CONSULTA.campo) — um argumento só, com ponto
+    const dot = first.indexOf('.');
+    if (dot > 0) {
+      const node = first.slice(0, dot);
+      const field = first.slice(dot + 1);
+      if (context.knownNodeIds?.has(node)) return { nodeId: node, fieldName: field };
+    }
+
     return context.knownNodeIds?.has(first) ? { nodeId: first } : { fieldName: first };
   };
 
@@ -142,6 +150,29 @@ export function createAggregateFunctions(
 
     MAXOF: (...args) => aggregate(args, (values) => (values.length ? Math.max(...values) : 0)),
 
+    /** Soma ignorando repetidos: útil quando o join multiplica linhas. */
+    SUMDISTINCT: (...args) => {
+      const { nodeId, fieldName } = parseArgs(args);
+      const rows = resolveRows(context, nodeId);
+      if (!fieldName) return 0;
+
+      const seen = new Set<string>();
+      let total = 0;
+
+      for (const row of rows) {
+        const raw = row.data[fieldName];
+        if (raw === null || raw === undefined || raw === '') continue;
+
+        const key = String(raw);
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        const value = toNumber(raw);
+        if (Number.isFinite(value)) total += value;
+      }
+      return total;
+    },
+
     /** Quantos valores distintos aquele campo tem — útil para "quantos clientes". */
     COUNTDISTINCT: (...args) => {
       const { nodeId, fieldName } = parseArgs(args);
@@ -158,12 +189,74 @@ export function createAggregateFunctions(
   };
 }
 
+/**
+ * Normaliza o nome de uma consulta para uso em expressão.
+ *
+ * "Itens do pedido" vira "ITENS_DO_PEDIDO". Assim o usuário escreve
+ * `SUM(ITENS_DO_PEDIDO.valor)` sem aspas e sem se preocupar com acento ou
+ * espaço — que quebrariam o parser.
+ */
+export function normalizeNodeId(name: string): string {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase();
+}
+
+/** Catálogo das agregações, para a ajuda e o autocomplete do Designer. */
+export interface AggregateDoc {
+  name: string;
+  signature: string;
+  description: string;
+  example: string;
+}
+
+export const AGGREGATE_DOCS: AggregateDoc[] = [
+  {
+    name: 'SUM',
+    signature: 'SUM(CONSULTA.campo)',
+    description: 'Soma os valores do campo',
+    example: 'SUM(ITENS.valor_total)',
+  },
+  {
+    name: 'COUNT',
+    signature: 'COUNT(CONSULTA)',
+    description: 'Quantas linhas a consulta tem',
+    example: 'COUNT(PEDIDOS)',
+  },
+  {
+    name: 'COUNTDISTINCT',
+    signature: 'COUNTDISTINCT(CONSULTA.campo)',
+    description: 'Quantos valores diferentes o campo tem',
+    example: 'COUNTDISTINCT(PEDIDOS.cliente)',
+  },
+  {
+    name: 'AVG',
+    signature: 'AVG(CONSULTA.campo)',
+    description: 'Média dos valores',
+    example: 'AVG(ITENS.valor_unitario)',
+  },
+  {
+    name: 'SUMDISTINCT',
+    signature: 'SUMDISTINCT(CONSULTA.campo)',
+    description: 'Soma ignorando valores repetidos',
+    example: 'SUMDISTINCT(PEDIDOS.frete)',
+  },
+  {
+    name: 'MINOF',
+    signature: 'MINOF(CONSULTA.campo)',
+    description: 'Menor valor',
+    example: 'MINOF(ITENS.valor_total)',
+  },
+  {
+    name: 'MAXOF',
+    signature: 'MAXOF(CONSULTA.campo)',
+    description: 'Maior valor',
+    example: 'MAXOF(ITENS.valor_total)',
+  },
+];
+
 /** Nomes das funções de agregação, para o autocomplete do Designer. */
-export const AGGREGATE_FUNCTION_NAMES = [
-  'SUM',
-  'COUNT',
-  'AVG',
-  'MINOF',
-  'MAXOF',
-  'COUNTDISTINCT',
-] as const;
+export const AGGREGATE_FUNCTION_NAMES = AGGREGATE_DOCS.map((d) => d.name);

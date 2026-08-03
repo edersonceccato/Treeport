@@ -629,3 +629,262 @@ describe('formas e totalizador', () => {
     expect((await inspectPdf(bytes)).text).toContain('Aparece');
   });
 });
+
+describe('regras condicionais e posição relativa', () => {
+  it('esconde o elemento quando a condição casa', async () => {
+    const bytes = await renderReport(
+      {
+        id: 't',
+        name: 'T',
+        boundDataSourceNodeId: 'N',
+        pageSize: 'A4',
+        bands: {
+          details: {
+            height: 40,
+            elements: [
+              {
+                id: 'v',
+                type: 'label',
+                x: 0,
+                y: 0,
+                width: 200,
+                height: 14,
+                content: 'SOME',
+                rules: [{ when: 'total < 0', hide: true }],
+              },
+            ],
+          },
+        },
+      },
+      dataSet([{ total: -10 }]),
+    );
+
+    expect((await inspectPdf(bytes)).text).not.toContain('SOME');
+  });
+
+  it('mantém o elemento quando a condição não casa', async () => {
+    const bytes = await renderReport(
+      {
+        id: 't',
+        name: 'T',
+        boundDataSourceNodeId: 'N',
+        pageSize: 'A4',
+        bands: {
+          details: {
+            height: 40,
+            elements: [
+              {
+                id: 'v',
+                type: 'label',
+                x: 0,
+                y: 0,
+                width: 200,
+                height: 14,
+                content: 'FICA',
+                rules: [{ when: 'total < 0', hide: true }],
+              },
+            ],
+          },
+        },
+      },
+      dataSet([{ total: 10 }]),
+    );
+
+    expect((await inspectPdf(bytes)).text).toContain('FICA');
+  });
+
+  it('troca o conteúdo conforme a regra', async () => {
+    const bytes = await renderReport(
+      {
+        id: 't',
+        name: 'T',
+        boundDataSourceNodeId: 'N',
+        pageSize: 'A4',
+        bands: {
+          details: {
+            height: 40,
+            elements: [
+              {
+                id: 'v',
+                type: 'label',
+                x: 0,
+                y: 0,
+                width: 200,
+                height: 14,
+                content: "{{FORMAT(total, '#,##0.00')}}",
+                rules: [{ when: 'total < 0', content: 'ZERO' }],
+              },
+            ],
+          },
+        },
+      },
+      dataSet([{ total: -80 }]),
+    );
+
+    const pdf = await inspectPdf(bytes);
+    expect(pdf.text).toContain('ZERO');
+    expect(pdf.text).not.toContain('-80');
+  });
+
+  it('uma condição inválida é ignorada em vez de derrubar o relatório', async () => {
+    const bytes = await renderReport(
+      {
+        id: 't',
+        name: 'T',
+        boundDataSourceNodeId: 'N',
+        pageSize: 'A4',
+        bands: {
+          details: {
+            height: 40,
+            elements: [
+              {
+                id: 'v',
+                type: 'label',
+                x: 0,
+                y: 0,
+                width: 200,
+                height: 14,
+                content: 'SEGUE',
+                rules: [{ when: 'isso ( nao compila', hide: true }],
+              },
+            ],
+          },
+        },
+      },
+      dataSet([{}]),
+    );
+
+    expect((await inspectPdf(bytes)).text).toContain('SEGUE');
+  });
+
+  it('a primeira regra que casa é a que vale', async () => {
+    const bytes = await renderReport(
+      {
+        id: 't',
+        name: 'T',
+        boundDataSourceNodeId: 'N',
+        pageSize: 'A4',
+        bands: {
+          details: {
+            height: 40,
+            elements: [
+              {
+                id: 'v',
+                type: 'label',
+                x: 0,
+                y: 0,
+                width: 200,
+                height: 14,
+                content: 'ORIGINAL',
+                rules: [
+                  { when: 'total > 0', content: 'PRIMEIRA' },
+                  { when: 'total > 0', content: 'SEGUNDA' },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      dataSet([{ total: 5 }]),
+    );
+
+    const pdf = await inspectPdf(bytes);
+    expect(pdf.text).toContain('PRIMEIRA');
+    expect(pdf.text).not.toContain('SEGUNDA');
+  });
+
+  it('o elemento relativo ocupa o lugar do que sumiu', async () => {
+    const template = (dados: Record<string, unknown>) =>
+      renderReport(
+        {
+          id: 't',
+          name: 'T',
+          boundDataSourceNodeId: 'N',
+          pageSize: 'A4',
+          margins: { top: 40, right: 40, bottom: 40, left: 40 },
+          bands: {
+            details: {
+              height: 120,
+              elements: [
+                {
+                  id: 'primeiro',
+                  type: 'label',
+                  x: 0,
+                  y: 0,
+                  width: 200,
+                  height: 40,
+                  content: 'PRIMEIRO',
+                  rules: [{ when: '!tem', hide: true }],
+                },
+                {
+                  id: 'segundo',
+                  type: 'label',
+                  x: 0,
+                  y: 50,
+                  width: 200,
+                  height: 20,
+                  content: 'SEGUNDO',
+                  relativeTo: { elementId: 'primeiro', placement: 'below', gap: 5 },
+                },
+              ],
+            },
+          },
+        },
+        dataSet([dados]),
+      );
+
+    const comPrimeiro = await inspectPdf(await template({ tem: true }));
+    const semPrimeiro = await inspectPdf(await template({ tem: false }));
+
+    const yCom = findItem(comPrimeiro.pages[0]!, 'SEGUNDO')!.y;
+    const ySem = findItem(semPrimeiro.pages[0]!, 'SEGUNDO')!.y;
+
+    // sem o primeiro, o segundo sobe (Y do PDF cresce para cima)
+    expect(ySem).toBeGreaterThan(yCom);
+  });
+
+  it('SUM(CONSULTA.campo) funciona com a sintaxe de ponto', async () => {
+    const dados: ResolvedDataSet = {
+      nodeId: 'PEDIDO',
+      rows: [
+        {
+          data: {},
+          children: {
+            ITEM: [
+              { data: { valor: 300 }, children: {} },
+              { data: { valor: 200 }, children: {} },
+            ],
+          },
+        },
+      ],
+    };
+
+    const bytes = await renderReport(
+      {
+        id: 't',
+        name: 'T',
+        boundDataSourceNodeId: 'PEDIDO',
+        pageSize: 'A4',
+        bands: {
+          details: {
+            height: 40,
+            elements: [
+              {
+                id: 's',
+                type: 'label',
+                x: 0,
+                y: 0,
+                width: 300,
+                height: 14,
+                content: "Total: {{FORMAT(SUM(ITEM.valor), '#,##0.00')}}",
+              },
+            ],
+          },
+        },
+      },
+      dados,
+    );
+
+    expect((await inspectPdf(bytes)).text).toContain('Total: 500,00');
+  });
+});

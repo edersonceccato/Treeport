@@ -16,13 +16,14 @@ import type {
   SubreportElement,
 } from '@treeport/schema';
 import type { PageContext } from './page-context.js';
-import { formatValue, type FormatOptions } from './format.js';
+import { formatValue, type FormatOptions } from '@treeport/schema';
 import { lineHeight, wrapText } from './text.js';
-import { interpolate, evaluateExpression } from '../expressions/interpolate.js';
-import { hasField } from '../expressions/evaluate.js';
+import { interpolate, evaluateExpression } from '@treeport/schema';
+import { hasField } from '@treeport/schema';
 import { generateBarcode, generateQrCode, type BarcodeRenderOptions } from './barcode.js';
+import { applyRules, type AppliedRules } from '@treeport/schema';
 import { formatQrContent } from './qr-content.js';
-import type { EvaluateOptions, ExpressionScope } from '../expressions/evaluate.js';
+import type { EvaluateOptions, ExpressionScope } from '@treeport/schema';
 
 /**
  * Desenho dos elementos individuais dentro de uma banda.
@@ -93,51 +94,76 @@ export async function renderElement(
   absoluteY: number,
   context: RenderElementContext,
 ): Promise<number> {
-  // `hidden` some do PDF também, não só do designer
-  if (element.hidden) return 0;
+  // as regras condicionais decidem antes de tudo: podem esconder o elemento,
+  // trocar o conteúdo ou o estilo conforme os dados da linha (item 19)
+  const applied = applyRules(element, resolveScope(context), context.expressionOptions ?? {});
+  if (applied.hidden) return 0;
 
-  switch (element.type) {
+  // o switch discrimina sobre `target`, que é o elemento já com as regras
+  // aplicadas — usar `element.type` aqui perderia o estreitamento de tipo
+  const target: ReportElement = applyOverrides(element, applied);
+
+  switch (target.type) {
     case 'region':
-      return renderRegion(element, absoluteY, context);
+      return renderRegion(target, absoluteY, context);
 
     case 'label':
-      return renderText(resolveLabelText(element, context), element, absoluteY, context);
+      return renderText(resolveLabelText(target, context), target, absoluteY, context);
 
     case 'field':
-      return renderText(resolveFieldText(element, context), element, absoluteY, context);
+      return renderText(resolveFieldText(target, context), target, absoluteY, context);
 
     case 'rect':
-      return renderRect(element, absoluteY, context);
+      return renderRect(target, absoluteY, context);
 
     case 'shape':
-      return renderShape(element, absoluteY, context);
+      return renderShape(target, absoluteY, context);
 
     case 'aggregate':
-      return renderText(resolveAggregateText(element, context), element, absoluteY, context);
+      return renderText(resolveAggregateText(target, context), target, absoluteY, context);
 
     case 'line':
-      return renderLine(element, absoluteY, context);
+      return renderLine(target, absoluteY, context);
 
     case 'subreport':
       // delegado ao renderer, que sabe desenhar bandas (ver `renderSubreport`)
       return context.renderSubreport
-        ? context.renderSubreport(element, absoluteY, context)
-        : element.height;
+        ? context.renderSubreport(target, absoluteY, context)
+        : target.height;
 
     case 'barcode':
-      return renderBarcode(element, absoluteY, context);
+      return renderBarcode(target, absoluteY, context);
 
     case 'qrcode':
-      return renderQrCode(element, absoluteY, context);
+      return renderQrCode(target, absoluteY, context);
 
     case 'image':
-      return renderImage(element, absoluteY, context);
+      return renderImage(target, absoluteY, context);
 
     // `table` entra depois; reservar o espaço é melhor que ignorar em
     // silêncio, porque o layout ao redor continua correto.
     default:
-      return element.height;
+      return target.height;
   }
+}
+
+/** Aplica o conteúdo e o estilo que uma regra definiu, sem mutar o original. */
+function applyOverrides(element: ReportElement, applied: AppliedRules): ReportElement {
+  if (applied.content === undefined && !applied.style) return element;
+
+  const patched = { ...element } as Record<string, unknown>;
+  if (applied.style) patched['style'] = applied.style;
+
+  if (applied.content !== undefined) {
+    // o campo que carrega o texto muda conforme o tipo
+    if (element.type === 'label') patched['content'] = applied.content;
+    else if (element.type === 'field') patched['fieldName'] = applied.content;
+    else if (element.type === 'barcode' || element.type === 'qrcode') {
+      patched['valueExpression'] = applied.content;
+    }
+  }
+
+  return patched as unknown as ReportElement;
 }
 
 /**

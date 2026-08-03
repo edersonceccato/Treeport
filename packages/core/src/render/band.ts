@@ -1,4 +1,4 @@
-import type { Band, ResolvedRow } from '@treeport/schema';
+import type { Band, ReportElement, ResolvedRow } from '@treeport/schema';
 import type { PageContext } from './page-context.js';
 import { renderElement, type RenderElementContext } from './elements.js';
 import { measureSubreport } from './subreport.js';
@@ -30,13 +30,25 @@ export async function renderBand(
   let maxBottom = options.shrinkToContent ? 0 : band.height;
   const hasGrowingElement = ordered.some((e) => e.canGrow);
 
+  // altura que cada elemento realmente ocupou, para o posicionamento relativo
+  const used_: Record<string, number> = {};
+  const drawnY: Record<string, number> = {};
+
   for (const element of ordered) {
-    const elementY = absoluteY + element.y + offset;
+    // posição relativa: quando o elemento de referência não desenhou nada,
+    // este sobe e ocupa o lugar dele em vez de deixar um buraco (item 18)
+    const relative = resolveRelativeY(element, used_, drawnY);
+    const baseY = relative ?? element.y;
+
+    const elementY = absoluteY + baseY + offset;
     const used = await renderElement(element, elementY, context);
+
+    used_[element.id] = used;
+    drawnY[element.id] = baseY;
 
     // a base deste elemento usa o offset com que ele foi DESENHADO; o
     // crescimento dele entra no offset só depois, para os elementos seguintes
-    const bottom = element.y + offset + used;
+    const bottom = baseY + offset + used;
     if (bottom > maxBottom) maxBottom = bottom;
 
     if (element.canGrow) {
@@ -85,6 +97,30 @@ export function measureBand(band: Band, row?: ResolvedRow): number {
   }
 
   return maxBottom;
+}
+
+/**
+ * Y de um elemento posicionado em relação a outro.
+ *
+ * Devolve undefined quando não há `relativeTo` ou a referência ainda não foi
+ * desenhada — aí vale a posição declarada.
+ */
+function resolveRelativeY(
+  element: ReportElement,
+  usedHeights: Record<string, number>,
+  drawnY: Record<string, number>,
+): number | undefined {
+  const relative = element.relativeTo;
+  if (!relative) return undefined;
+
+  const refY = drawnY[relative.elementId];
+  const refHeight = usedHeights[relative.elementId];
+  if (refY === undefined || refHeight === undefined) return undefined;
+
+  // colocação à direita não muda o Y; só a de baixo interessa aqui
+  if (relative.placement === 'right') return refY;
+
+  return refY + refHeight + (relative.gap ?? 0);
 }
 
 /** Opções de renderização de uma banda. */

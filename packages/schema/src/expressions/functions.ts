@@ -1,4 +1,4 @@
-import { formatValue } from '../render/format.js';
+import { formatValue } from '../format.js';
 
 /**
  * Funções disponíveis dentro das expressões.
