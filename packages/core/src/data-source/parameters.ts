@@ -140,3 +140,17 @@ function describe(value: unknown): string {
   if (typeof value === 'object') return 'objeto';
   return `${typeof value} (${JSON.stringify(value)})`;
 }
+
+/**
+ * Valores de teste declarados nos parâmetros da árvore.
+ *
+ * Usado no preview do Designer, que roda o relatório sem o usuário informar
+ * nada — os `testValue` fazem o papel dos valores reais.
+ */
+export function testValuesOf(parameters: ReportParameter[]): Record<string, unknown> {
+  const values: Record<string, unknown> = {};
+  for (const param of parameters) {
+    if (param.testValue !== undefined) values[param.name] = param.testValue;
+  }
+  return values;
+}

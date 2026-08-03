@@ -30,6 +30,7 @@ export type { ResolveOptions, ResolveStrategy } from './data-source/resolver.js'
 
 export {
   validateParameters,
+  testValuesOf,
   ParameterValidationError,
 } from './data-source/parameters.js';
 
@@ -61,6 +62,28 @@ export { BUILTIN_FUNCTIONS, toBoolean, toNumber, toText } from './expressions/fu
 export type { ExpressionFunction } from './expressions/functions.js';
 
 export type { ExpressionNode } from './expressions/ast.js';
+
+// --- Metadados de controle e contexto (Anexo A e B) ---
+export {
+  generate,
+  type GenerateOptions,
+  type GenerateResult,
+} from './control/engine.js';
+
+export {
+  readControlFields,
+  assertNotBlocked,
+  stripControlFields,
+  ReportBlockedError,
+  DEFAULT_CONTROL_PREFIX,
+} from './control/control-fields.js';
+export type { ControlFields } from './control/control-fields.js';
+
+export {
+  TemplateRegistry,
+  resolveTemplate,
+  TemplateNotFoundError,
+} from './control/template-registry.js';
 
 // --- Renderização PDF ---
 export { renderReport, loadFonts } from './render/renderer.js';
@@ -111,4 +134,6 @@ export type {
   ElementStyle,
   PageSize,
   PageMargins,
+  ReportContext,
+  ReportContextRef,
 } from '@treeport/schema';

@@ -22,7 +22,7 @@ O que diferencia:
 
 ## Status
 
-🚧 Em construção, por fases. **Fase 6 concluída: barcode, QR e imagens.**
+🚧 Em construção, por fases. **Fase 7 concluída: metadados de controle.**
 
 | Fase | Escopo | Status |
 |---|---|---|
@@ -32,7 +32,7 @@ O que diferencia:
 | 4 | Subreports aninhados | ✅ |
 | 5 | Auto-grow em cascata | ✅ |
 | 6 | Barcode e QRCode | ✅ |
-| 7 | Metadados de controle (`__block`, `__templateId`) e contexto | ⬜ |
+| 7 | Metadados de controle (`__block`, `__templateId`) e contexto | ✅ |
 | 8 | Adapters de banco reais (Postgres primeiro) | ⬜ |
 | 9 | Designer visual web (Web Component) | ⬜ |
 | 10 | Persistência e documentação final | ⬜ |
@@ -160,6 +160,7 @@ pnpm example:phase3  # PDF com labels calculados por expressão
 pnpm example:phase4  # proposta > ofertas > taxas/embalagens (3 níveis)
 pnpm example:phase5  # blocos que crescem e empurram o que vem depois
 pnpm example:phase6  # etiquetas com Code 128, EAN-13 e QR de rastreio
+pnpm example:phase7  # a query escolhe o layout e bloqueia emissão inválida
 ```
 
 ## Documentação
@@ -170,6 +171,7 @@ pnpm example:phase6  # etiquetas com Code 128, EAN-13 e QR de rastreio
 - [Subreports](docs/subreports.md) — nós aninhados, auto-grow, quebra de página
 - [Auto-grow](docs/auto-grow.md) — `canGrow`, deslocamento em cascata, medição
 - [Códigos e imagens](docs/barcodes.md) — barcode, QR Code, `ImageElement`
+- [Campos de controle](docs/control-fields.md) — `__block`, `__templateId`, contextos
 
 Os demais documentos (`storage.md`, `designer-ui.md`) entram junto com as fases
 correspondentes.

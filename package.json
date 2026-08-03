@@ -13,7 +13,8 @@
     "example:phase3": "vite-node packages/core/examples/expressions-pdf.ts",
     "example:phase4": "vite-node packages/core/examples/proposal-subreports-pdf.ts",
     "example:phase5": "vite-node packages/core/examples/autogrow-pdf.ts",
-    "example:phase6": "vite-node packages/core/examples/barcode-pdf.ts"
+    "example:phase6": "vite-node packages/core/examples/barcode-pdf.ts",
+    "example:phase7": "vite-node packages/core/examples/control-fields.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

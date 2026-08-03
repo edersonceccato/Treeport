@@ -1,6 +1,7 @@
 import type { DataSourceTree, Template } from '@treeport/schema';
 import type { Executor } from '../adapters/executor.js';
 import { resolveDataSourceTree, type ResolveOptions } from '../data-source/resolver.js';
+import { testValuesOf } from '../data-source/parameters.js';
 import { renderReport, type RenderOptions } from './renderer.js';
 
 /**
@@ -23,19 +24,10 @@ export async function generateReport(
   // os parâmetros já validados ficam visíveis nas expressões pelo nome, sem o
   // usuário precisar repassá-los à mão
   const parameters =
-    options.parameters ?? (options.useTestValues ? testValuesOf(tree) : undefined);
+    options.parameters ?? (options.useTestValues ? testValuesOf(tree.parameters) : undefined);
 
   return renderReport(template, dataSet, {
     ...options,
     ...(parameters ? { parameters } : {}),
   });
-}
-
-/** Valores de teste declarados nos parâmetros, usados no preview. */
-function testValuesOf(tree: DataSourceTree): Record<string, unknown> {
-  const values: Record<string, unknown> = {};
-  for (const param of tree.parameters) {
-    if (param.testValue !== undefined) values[param.name] = param.testValue;
-  }
-  return values;
 }
