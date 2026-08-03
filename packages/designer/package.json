@@ -1,8 +1,25 @@
 {
   "name": "@treeport/designer",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Designer visual drag-and-drop do Treeport (Web Component). Entra na Fase 9.",
+  "version": "0.1.0",
+  "description": "Designer visual drag-and-drop do Treeport, como Web Component. Roda em React, Vue, Angular, Next.js ou HTML puro.",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "typecheck": "tsc -b tsconfig.json"
+  },
+  "dependencies": {
+    "@treeport/schema": "workspace:*",
+    "lit": "^3.3.3"
+  },
+  "keywords": ["report", "designer", "web-component", "pdf"],
   "license": "MIT"
 }

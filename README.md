@@ -22,7 +22,7 @@ O que diferencia:
 
 ## Status
 
-🚧 Em construção, por fases. **Fase 8 concluída: adapter PostgreSQL.**
+🚧 Em construção, por fases. **Fase 9 em andamento: designer visual (9.1–9.3).**
 
 | Fase | Escopo | Status |
 |---|---|---|
@@ -34,7 +34,7 @@ O que diferencia:
 | 6 | Barcode e QRCode | ✅ |
 | 7 | Metadados de controle (`__block`, `__templateId`) e contexto | ✅ |
 | 8 | Adapters de banco reais (Postgres primeiro) | ✅ |
-| 9 | Designer visual web (Web Component) | ⬜ |
+| 9 | Designer visual web (Web Component) | 🟡 canvas, paleta e propriedades |
 | 10 | Persistência e documentação final | ⬜ |
 
 ## Pacotes
@@ -158,6 +158,8 @@ pnpm example:phase5  # blocos que crescem e empurram o que vem depois
 pnpm example:phase6  # etiquetas com Code 128, EAN-13 e QR de rastreio
 pnpm example:phase7  # a query escolhe o layout e bloqueia emissão inválida
 
+npx vite packages/designer/examples   # abre o designer visual no browser
+
 pnpm pg:up           # sobe um Postgres descartável (Docker)
 pnpm test:pg         # roda a suíte incluindo a integração com Postgres
 pnpm pg:down
@@ -173,6 +175,7 @@ pnpm pg:down
 - [Códigos e imagens](docs/barcodes.md) — barcode, QR Code, `ImageElement`
 - [Campos de controle](docs/control-fields.md) — `__block`, `__templateId`, contextos
 - [Adapters de banco](docs/adapters.md) — PostgreSQL e como escrever o seu
+- [Designer visual](docs/designer-ui.md) — o Web Component `<treeport-designer>`
 
 Os demais documentos (`storage.md`, `designer-ui.md`) entram junto com as fases
 correspondentes.

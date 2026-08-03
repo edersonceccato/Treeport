@@ -1,0 +1,433 @@
+import type {
+  Band,
+  BandSet,
+  ElementStyle,
+  ReportElement,
+  Template,
+} from '@treeport/schema';
+
+/**
+ * Edição do template, sem tocar em DOM.
+ *
+ * Toda mutação do designer passa por aqui: criar, mover, redimensionar,
+ * alterar propriedade, remover. Manter isso separado da UI significa que a
+ * lógica de edição é testável sem browser — que é exatamente o que a sub-fase
+ * 9.2 do brief pede.
+ *
+ * O histórico guarda snapshots do JSON inteiro. Para um schema deste tamanho
+ * isso é mais simples e mais seguro que diffs, e o custo é irrelevante: um
+ * template com 200 elementos dá poucas dezenas de KB por snapshot.
+ */
+
+export type BandName = 'header' | 'details' | 'footer';
+
+/** Onde um elemento vive: em qual banda, e em que posição da lista. */
+export interface ElementLocation {
+  band: BandName;
+  index: number;
+}
+
+export interface TemplateEditorOptions {
+  /** Passos de histórico guardados. Default: 50. */
+  historyLimit?: number;
+  /** Chamado a cada mudança, para a UI se redesenhar. */
+  onChange?: (template: Template) => void;
+}
+
+/** Um template novo, vazio, com as três bandas. */
+export function createEmptyTemplate(overrides: Partial<Template> = {}): Template {
+  return {
+    id: `template-${Date.now()}`,
+    name: 'Novo relatório',
+    boundDataSourceNodeId: '',
+    pageSize: 'A4',
+    margins: { top: 40, right: 40, bottom: 40, left: 40 },
+    bands: {
+      header: { height: 60, elements: [] },
+      details: { height: 40, elements: [] },
+      footer: { height: 30, elements: [] },
+    },
+    ...overrides,
+  };
+}
+
+export class TemplateEditor {
+  private current: Template;
+  private readonly past: Template[] = [];
+  private readonly future: Template[] = [];
+  private readonly historyLimit: number;
+  private readonly onChange: ((template: Template) => void) | undefined;
+  /** Profundidade de agrupamento de histórico (arrasto em curso). */
+  private batchDepth = 0;
+  /** O passo do lote já foi registrado no histórico? */
+  private batchStarted = false;
+
+  constructor(template: Template, options: TemplateEditorOptions = {}) {
+    this.current = clone(template);
+    this.historyLimit = options.historyLimit ?? 50;
+    this.onChange = options.onChange;
+  }
+
+  /** O template atual. É uma cópia: mutá-lo não afeta o editor. */
+  get template(): Template {
+    return clone(this.current);
+  }
+
+  /** Acesso somente-leitura, sem clonar (para render, que não muta). */
+  peek(): Readonly<Template> {
+    return this.current;
+  }
+
+  get canUndo(): boolean {
+    return this.past.length > 0;
+  }
+
+  get canRedo(): boolean {
+    return this.future.length > 0;
+  }
+
+  // --- histórico ------------------------------------------------------------
+
+  /**
+   * Aplica uma mudança, registrando o estado anterior no histórico.
+   * Toda mutação pública passa por aqui — é o que garante que tudo é undoável.
+   */
+  private commit(mutate: (draft: Template) => void): void {
+    const before = clone(this.current);
+    const draft = clone(this.current);
+
+    mutate(draft);
+
+    // durante uma interação contínua (arrastar), só o PRIMEIRO passo entra no
+    // histórico: senão um arrasto de 40 pixels viraria 40 undos, e desfazer
+    // devolveria o elemento um pixel por vez
+    if (this.batchDepth === 0 || !this.batchStarted) {
+      this.past.push(before);
+      if (this.past.length > this.historyLimit) this.past.shift();
+      if (this.batchDepth > 0) this.batchStarted = true;
+    }
+
+    // qualquer ação nova invalida o caminho de redo
+    this.future.length = 0;
+
+    this.current = draft;
+    this.onChange?.(this.template);
+  }
+
+  /**
+   * Agrupa várias mutações num único passo de histórico.
+   *
+   * O designer chama `beginBatch` no `pointerdown` e `endBatch` no `pointerup`,
+   * de modo que o arrasto inteiro seja um só undo.
+   */
+  beginBatch(): void {
+    this.batchDepth += 1;
+  }
+
+  endBatch(): void {
+    this.batchDepth = Math.max(0, this.batchDepth - 1);
+    if (this.batchDepth === 0) this.batchStarted = false;
+  }
+
+  undo(): boolean {
+    const previous = this.past.pop();
+    if (!previous) return false;
+
+    this.future.push(clone(this.current));
+    this.current = previous;
+    this.onChange?.(this.template);
+    return true;
+  }
+
+  redo(): boolean {
+    const next = this.future.pop();
+    if (!next) return false;
+
+    this.past.push(clone(this.current));
+    this.current = next;
+    this.onChange?.(this.template);
+    return true;
+  }
+
+  /** Substitui o template inteiro (abrir arquivo, carregar do servidor). */
+  replace(template: Template): void {
+    this.commit((draft) => {
+      Object.assign(draft, clone(template));
+    });
+  }
+
+  // --- consulta -------------------------------------------------------------
+
+  /** A banda pedida, ou undefined se o template não a tem. */
+  band(name: BandName): Band | undefined {
+    return this.current.bands[name];
+  }
+
+  /** Todas as bandas existentes, na ordem de desenho. */
+  bands(): { name: BandName; band: Band }[] {
+    const order: BandName[] = ['header', 'details', 'footer'];
+    const out: { name: BandName; band: Band }[] = [];
+    for (const name of order) {
+      const band = this.current.bands[name];
+      if (band) out.push({ name, band });
+    }
+    return out;
+  }
+
+  /** Localiza um elemento pelo id, em qualquer banda. */
+  locate(elementId: string): ElementLocation | undefined {
+    for (const { name, band } of this.bands()) {
+      const index = band.elements.findIndex((e) => e.id === elementId);
+      if (index >= 0) return { band: name, index };
+    }
+    return undefined;
+  }
+
+  /** O elemento com aquele id, se existir. */
+  element(elementId: string): ReportElement | undefined {
+    const at = this.locate(elementId);
+    if (!at) return undefined;
+    return this.current.bands[at.band]!.elements[at.index];
+  }
+
+  // --- mutações -------------------------------------------------------------
+
+  /**
+   * Adiciona um elemento a uma banda.
+   * Se o id colidir com um existente, um sufixo é acrescentado — dois
+   * elementos com o mesmo id quebrariam a seleção e o `locate`.
+   */
+  addElement(band: BandName, element: ReportElement): string {
+    const id = this.uniqueId(element.id);
+
+    this.commit((draft) => {
+      ensureBand(draft.bands, band);
+      draft.bands[band]!.elements.push({ ...element, id } as ReportElement);
+    });
+
+    return id;
+  }
+
+  removeElement(elementId: string): boolean {
+    const at = this.locate(elementId);
+    if (!at) return false;
+
+    this.commit((draft) => {
+      draft.bands[at.band]!.elements.splice(at.index, 1);
+    });
+    return true;
+  }
+
+  /** Aplica um patch parcial ao elemento (posição, tamanho, conteúdo...). */
+  updateElement(elementId: string, patch: Partial<ReportElement>): boolean {
+    const at = this.locate(elementId);
+    if (!at) return false;
+
+    this.commit((draft) => {
+      const target = draft.bands[at.band]!.elements[at.index]!;
+      // `type` e `id` não mudam por patch: trocar o tipo exige recriar o
+      // elemento, senão sobrariam campos do tipo antigo
+      const { type: _type, id: _id, ...rest } = patch as Record<string, unknown>;
+      Object.assign(target, rest);
+    });
+    return true;
+  }
+
+  /** Move um elemento para uma posição absoluta dentro da banda. */
+  moveElement(elementId: string, x: number, y: number): boolean {
+    return this.updateElement(elementId, { x, y } as Partial<ReportElement>);
+  }
+
+  /** Redimensiona, respeitando um mínimo para o elemento não sumir. */
+  resizeElement(elementId: string, width: number, height: number): boolean {
+    return this.updateElement(elementId, {
+      width: Math.max(MIN_SIZE, width),
+      height: Math.max(MIN_SIZE, height),
+    } as Partial<ReportElement>);
+  }
+
+  /** Altera o estilo, mesclando com o que já existe. */
+  updateStyle(elementId: string, patch: ElementStyle): boolean {
+    const element = this.element(elementId);
+    if (!element) return false;
+
+    return this.updateElement(elementId, {
+      style: { ...element.style, ...patch },
+    } as Partial<ReportElement>);
+  }
+
+  /** Muda a altura de uma banda. */
+  setBandHeight(band: BandName, height: number): void {
+    this.commit((draft) => {
+      ensureBand(draft.bands, band);
+      draft.bands[band]!.height = Math.max(MIN_SIZE, height);
+    });
+  }
+
+  /** Cria ou remove uma banda opcional (header/footer). */
+  toggleBand(band: 'header' | 'footer', enabled: boolean): void {
+    this.commit((draft) => {
+      if (enabled) {
+        draft.bands[band] ??= { height: band === 'header' ? 60 : 30, elements: [] };
+      } else {
+        delete draft.bands[band];
+      }
+    });
+  }
+
+  /** Altera propriedades do template (nome, página, margens). */
+  updateTemplate(patch: Partial<Omit<Template, 'bands'>>): void {
+    this.commit((draft) => {
+      Object.assign(draft, patch);
+    });
+  }
+
+  // --- ordenação (z-order) --------------------------------------------------
+
+  /**
+   * Traz o elemento para a frente.
+   *
+   * A ordem no array É a ordem de desenho: o motor renderiza na sequência, e
+   * o que vem depois fica por cima.
+   */
+  bringToFront(elementId: string): boolean {
+    return this.reorder(elementId, (elements, index) => {
+      const [element] = elements.splice(index, 1);
+      elements.push(element!);
+    });
+  }
+
+  sendToBack(elementId: string): boolean {
+    return this.reorder(elementId, (elements, index) => {
+      const [element] = elements.splice(index, 1);
+      elements.unshift(element!);
+    });
+  }
+
+  private reorder(
+    elementId: string,
+    apply: (elements: ReportElement[], index: number) => void,
+  ): boolean {
+    const at = this.locate(elementId);
+    if (!at) return false;
+
+    this.commit((draft) => {
+      apply(draft.bands[at.band]!.elements, at.index);
+    });
+    return true;
+  }
+
+  // --- alinhamento de múltiplos elementos -----------------------------------
+
+  /**
+   * Alinha vários elementos entre si.
+   *
+   * A referência é o elemento mais extremo na direção pedida — que é o
+   * comportamento que todo editor gráfico tem e o usuário espera.
+   */
+  align(elementIds: string[], mode: AlignMode): boolean {
+    const targets = elementIds
+      .map((id) => ({ id, element: this.element(id) }))
+      .filter((t): t is { id: string; element: ReportElement } => t.element !== undefined);
+
+    if (targets.length < 2) return false;
+
+    const boxes = targets.map((t) => t.element);
+    const left = Math.min(...boxes.map((e) => e.x));
+    const right = Math.max(...boxes.map((e) => e.x + e.width));
+    const top = Math.min(...boxes.map((e) => e.y));
+    const bottom = Math.max(...boxes.map((e) => e.y + e.height));
+
+    this.commit((draft) => {
+      for (const { id } of targets) {
+        const at = this.locate(id)!;
+        const target = draft.bands[at.band]!.elements[at.index]!;
+
+        switch (mode) {
+          case 'left':
+            target.x = left;
+            break;
+          case 'right':
+            target.x = right - target.width;
+            break;
+          case 'center':
+            target.x = (left + right) / 2 - target.width / 2;
+            break;
+          case 'top':
+            target.y = top;
+            break;
+          case 'bottom':
+            target.y = bottom - target.height;
+            break;
+          case 'middle':
+            target.y = (top + bottom) / 2 - target.height / 2;
+            break;
+        }
+      }
+    });
+
+    return true;
+  }
+
+  /** Distribui os elementos com espaçamento igual entre eles. */
+  distribute(elementIds: string[], axis: 'horizontal' | 'vertical'): boolean {
+    const targets = elementIds
+      .map((id) => this.element(id))
+      .filter((e): e is ReportElement => e !== undefined);
+
+    if (targets.length < 3) return false;
+
+    const key = axis === 'horizontal' ? 'x' : 'y';
+    const sorted = [...targets].sort((a, b) => a[key] - b[key]);
+    const first = sorted[0]!;
+    const last = sorted[sorted.length - 1]!;
+
+    const span = last[key] - first[key];
+    const step = span / (sorted.length - 1);
+
+    this.commit((draft) => {
+      sorted.forEach((element, i) => {
+        if (i === 0 || i === sorted.length - 1) return;
+        const at = this.locate(element.id)!;
+        draft.bands[at.band]!.elements[at.index]![key] = first[key] + step * i;
+      });
+    });
+
+    return true;
+  }
+
+  // --- utilidades -----------------------------------------------------------
+
+  /** Gera um id livre a partir de uma base. */
+  private uniqueId(base: string): string {
+    const candidate = base || 'element';
+    if (!this.element(candidate)) return candidate;
+
+    let n = 2;
+    while (this.element(`${candidate}-${n}`)) n += 1;
+    return `${candidate}-${n}`;
+  }
+
+  /** Exporta o template como JSON formatado, para download. */
+  toJSON(): string {
+    return JSON.stringify(this.current, null, 2);
+  }
+}
+
+export type AlignMode = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
+
+/** Tamanho mínimo de um elemento/banda, para não sumir do canvas. */
+export const MIN_SIZE = 4;
+
+function ensureBand(bands: BandSet, name: BandName): void {
+  if (name === 'details') {
+    bands.details ??= { height: 40, elements: [] };
+    return;
+  }
+  bands[name] ??= { height: name === 'header' ? 60 : 30, elements: [] };
+}
+
+/** Cópia profunda via JSON: o template é dado puro, sem funções nem datas. */
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}

@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Treeport Designer — demonstração</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+        margin: 0;
+        padding: 20px;
+        background: #f2f4f7;
+        color: #1f2937;
+      }
+      header {
+        margin-bottom: 16px;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 4px;
+      }
+      .hint {
+        font-size: 13px;
+        color: #6b7280;
+        margin: 0;
+      }
+      .toolbar {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin: 12px 0;
+      }
+      button,
+      select {
+        font: inherit;
+        font-size: 12px;
+        padding: 5px 10px;
+        border: 1px solid #d0d4da;
+        border-radius: 4px;
+        background: #fff;
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: #2563eb;
+      }
+      .sep {
+        width: 1px;
+        height: 20px;
+        background: #d0d4da;
+        margin: 0 4px;
+      }
+      .layout {
+        display: flex;
+        gap: 16px;
+        align-items: flex-start;
+      }
+      treeport-designer {
+        flex: 1 1 auto;
+        background: #fff;
+        padding: 12px;
+        border-radius: 8px;
+        border: 1px solid #d0d4da;
+      }
+      .inspector {
+        width: 250px;
+        flex: 0 0 auto;
+        background: #fff;
+        border: 1px solid #d0d4da;
+        border-radius: 8px;
+        padding: 12px;
+      }
+      .inspector h2 {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #6b7280;
+        margin: 0 0 8px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 6px;
+      }
+      .row label {
+        width: 62px;
+        font-size: 11px;
+        color: #6b7280;
+      }
+      .row input,
+      .row select {
+        flex: 1;
+        min-width: 0;
+        font: inherit;
+        font-size: 12px;
+        padding: 4px 6px;
+        border: 1px solid #d0d4da;
+        border-radius: 4px;
+      }
+      .empty {
+        font-size: 12px;
+        color: #9ca3af;
+      }
+      pre {
+        margin-top: 16px;
+        background: #1f2937;
+        color: #e5e7eb;
+        padding: 12px;
+        border-radius: 6px;
+        font-size: 11px;
+        max-height: 240px;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Treeport Designer</h1>
+      <p class="hint">
+        Arraste um elemento da paleta para uma banda. Clique para selecionar,
+        arraste para mover, use as alças para redimensionar. Setas movem;
+        Shift+clique seleciona vários; Delete remove; Ctrl/Cmd+Z desfaz.
+      </p>
+    </header>
+
+    <div class="toolbar">
+      <button id="undo">↶ Desfazer</button>
+      <button id="redo">↷ Refazer</button>
+      <div class="sep"></div>
+      <button data-align="left">⇤ Esquerda</button>
+      <button data-align="center">↔ Centro</button>
+      <button data-align="right">⇥ Direita</button>
+      <button data-align="top">⇧ Topo</button>
+      <button data-align="middle">↕ Meio</button>
+      <button data-align="bottom">⇩ Base</button>
+      <div class="sep"></div>
+      <button id="front">Trazer à frente</button>
+      <button id="back">Enviar para trás</button>
+      <div class="sep"></div>
+      <label style="font-size: 12px">
+        Grade
+        <select id="grid">
+          <option value="0">livre</option>
+          <option value="5" selected>5 pt</option>
+          <option value="10">10 pt</option>
+        </select>
+      </label>
+      <label style="font-size: 12px">
+        Zoom
+        <select id="zoom">
+          <option value="0.75">75%</option>
+          <option value="1" selected>100%</option>
+          <option value="1.5">150%</option>
+        </select>
+      </label>
+      <div class="sep"></div>
+      <button id="export">Exportar JSON</button>
+    </div>
+
+    <div class="layout">
+      <treeport-designer id="designer"></treeport-designer>
+
+      <aside class="inspector">
+        <h2>Propriedades</h2>
+        <div id="props"><p class="empty">Nenhum elemento selecionado.</p></div>
+      </aside>
+    </div>
+
+    <pre id="json"></pre>
+
+    <script type="module">
+      import '../src/index.ts';
+
+      const designer = document.getElementById('designer');
+      const props = document.getElementById('props');
+      const jsonOut = document.getElementById('json');
+
+      // um template de partida, para não abrir vazio
+      designer.template = {
+        id: 'demo',
+        name: 'Relatório de exemplo',
+        boundDataSourceNodeId: 'PEDIDO',
+        pageSize: 'A4',
+        margins: { top: 40, right: 40, bottom: 40, left: 40 },
+        bands: {
+          header: {
+            height: 60,
+            elements: [
+              {
+                id: 'titulo',
+                type: 'label',
+                x: 0,
+                y: 4,
+                width: 300,
+                height: 22,
+                content: 'Relatório de Pedidos',
+                style: { fontSize: 16, bold: true },
+              },
+              {
+                id: 'regua',
+                type: 'line',
+                x: 0,
+                y: 46,
+                width: 515,
+                height: 0,
+                orientation: 'horizontal',
+                style: { borderColor: '#555555', borderWidth: 1 },
+              },
+            ],
+          },
+          details: {
+            height: 40,
+            elements: [
+              {
+                id: 'numero',
+                type: 'field',
+                x: 0,
+                y: 6,
+                width: 120,
+                height: 14,
+                fieldName: 'numero',
+              },
+              {
+                id: 'cliente',
+                type: 'field',
+                x: 130,
+                y: 6,
+                width: 240,
+                height: 14,
+                fieldName: 'cliente',
+              },
+              {
+                id: 'total',
+                type: 'label',
+                x: 380,
+                y: 6,
+                width: 135,
+                height: 14,
+                content: "R$ {{FORMAT(total, '#,##0.00')}}",
+                style: { align: 'right' },
+              },
+            ],
+          },
+          footer: {
+            height: 30,
+            elements: [
+              {
+                id: 'rodape',
+                type: 'label',
+                x: 0,
+                y: 8,
+                width: 300,
+                height: 12,
+                content: 'Gerado pelo Treeport',
+                style: { fontSize: 8, color: '#666666' },
+              },
+            ],
+          },
+        },
+      };
+
+      let selecionados = [];
+
+      const mostrarJson = () => {
+        jsonOut.textContent = JSON.stringify(designer.template, null, 2);
+      };
+
+      designer.addEventListener('template-change', mostrarJson);
+
+      designer.addEventListener('selection-change', (e) => {
+        selecionados = e.detail.elements;
+        renderProps();
+      });
+
+      // --- painel de propriedades (sub-fase 9.3) ---
+      function renderProps() {
+        if (selecionados.length === 0) {
+          props.innerHTML = '<p class="empty">Nenhum elemento selecionado.</p>';
+          return;
+        }
+        if (selecionados.length > 1) {
+          props.innerHTML = `<p class="empty">${selecionados.length} elementos selecionados.<br>Use os botões de alinhar.</p>`;
+          return;
+        }
+
+        const el = selecionados[0];
+        const campos = [
+          ['x', 'X', 'number'],
+          ['y', 'Y', 'number'],
+          ['width', 'Largura', 'number'],
+          ['height', 'Altura', 'number'],
+        ];
+
+        let html = `<div class="row"><label>Tipo</label><input value="${el.type}" disabled></div>`;
+
+        for (const [prop, rotulo] of campos) {
+          html += `<div class="row"><label>${rotulo}</label>
+            <input type="number" data-prop="${prop}" value="${Math.round(el[prop])}"></div>`;
+        }
+
+        if (el.type === 'label') {
+          html += `<div class="row"><label>Texto</label>
+            <input data-prop="content" value="${escapar(el.content ?? '')}"></div>`;
+        }
+        if (el.type === 'field') {
+          html += `<div class="row"><label>Campo</label>
+            <input data-prop="fieldName" value="${escapar(el.fieldName ?? '')}"></div>`;
+          html += `<div class="row"><label>Formato</label>
+            <input data-prop="format" value="${escapar(el.format ?? '')}"></div>`;
+        }
+        if (el.type === 'barcode') {
+          html += `<div class="row"><label>Formato</label>
+            <select data-prop="format">
+              ${['code128', 'ean13', 'code39']
+                .map((f) => `<option ${el.format === f ? 'selected' : ''}>${f}</option>`)
+                .join('')}
+            </select></div>`;
+          html += `<div class="row"><label>Valor</label>
+            <input data-prop="valueExpression" value="${escapar(el.valueExpression ?? '')}"></div>`;
+        }
+        if (el.type === 'qrcode') {
+          html += `<div class="row"><label>Valor</label>
+            <input data-prop="valueExpression" value="${escapar(el.valueExpression ?? '')}"></div>`;
+        }
+        if (el.type === 'subreport') {
+          html += `<div class="row"><label>Nó</label>
+            <input data-prop="dataSourceNodeId" value="${escapar(el.dataSourceNodeId ?? '')}"></div>`;
+        }
+
+        html += `<h2 style="margin-top:12px">Estilo</h2>`;
+        html += `<div class="row"><label>Corpo</label>
+          <input type="number" data-style="fontSize" value="${el.style?.fontSize ?? 10}"></div>`;
+        html += `<div class="row"><label>Cor</label>
+          <input type="color" data-style="color" value="${el.style?.color ?? '#000000'}"></div>`;
+        html += `<div class="row"><label>Alinhar</label>
+          <select data-style="align">
+            ${['left', 'center', 'right']
+              .map((a) => `<option ${el.style?.align === a ? 'selected' : ''}>${a}</option>`)
+              .join('')}
+          </select></div>`;
+        html += `<div class="row"><label>Negrito</label>
+          <input type="checkbox" data-style="bold" ${el.style?.bold ? 'checked' : ''}></div>`;
+        html += `<div class="row"><label>Cresce</label>
+          <input type="checkbox" data-prop="canGrow" ${el.canGrow ? 'checked' : ''}></div>`;
+
+        props.innerHTML = html;
+
+        props.querySelectorAll('[data-prop]').forEach((input) => {
+          input.addEventListener('change', () => {
+            const prop = input.dataset.prop;
+            const valor =
+              input.type === 'number'
+                ? Number(input.value)
+                : input.type === 'checkbox'
+                  ? input.checked
+                  : input.value;
+            designer.api.updateElement(el.id, { [prop]: valor });
+            designer.requestUpdate();
+          });
+        });
+
+        props.querySelectorAll('[data-style]').forEach((input) => {
+          input.addEventListener('change', () => {
+            const prop = input.dataset.style;
+            const valor =
+              input.type === 'number'
+                ? Number(input.value)
+                : input.type === 'checkbox'
+                  ? input.checked
+                  : input.value;
+            designer.api.updateStyle(el.id, { [prop]: valor });
+            designer.requestUpdate();
+          });
+        });
+      }
+
+      const escapar = (s) => String(s).replace(/"/g, '&quot;');
+
+      // --- toolbar ---
+      document.getElementById('undo').onclick = () => designer.undo();
+      document.getElementById('redo').onclick = () => designer.redo();
+
+      document.querySelectorAll('[data-align]').forEach((btn) => {
+        btn.onclick = () => {
+          designer.api.align(
+            selecionados.map((e) => e.id),
+            btn.dataset.align,
+          );
+          designer.requestUpdate();
+        };
+      });
+
+      document.getElementById('front').onclick = () => {
+        selecionados.forEach((e) => designer.api.bringToFront(e.id));
+        designer.requestUpdate();
+      };
+      document.getElementById('back').onclick = () => {
+        selecionados.forEach((e) => designer.api.sendToBack(e.id));
+        designer.requestUpdate();
+      };
+
+      document.getElementById('grid').onchange = (e) => {
+        designer.gridSize = Number(e.target.value);
+      };
+      document.getElementById('zoom').onchange = (e) => {
+        designer.zoom = Number(e.target.value);
+      };
+
+      document.getElementById('export').onclick = () => {
+        const blob = new Blob([designer.api.toJSON()], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${designer.template.id}.json`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      };
+
+      mostrarJson();
+    </script>
+  </body>
+</html>
