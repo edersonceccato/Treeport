@@ -137,12 +137,28 @@ Numa linha horizontal vale a `width`; numa vertical, a `height`.
 }
 ```
 
+#### `subreport` — o design de um nó filho
+
+```json
+{
+  "id": "sub-taxas",
+  "type": "subreport",
+  "x": 12, "y": 34, "width": 490, "height": 14,
+  "dataSourceNodeId": "OFFER_FEE",
+  "canGrow": true,
+  "template": { "details": { "height": 13, "elements": [] } }
+}
+```
+
+Tem suas próprias bandas e aninha em profundidade livre.
+Ver [subreports.md](subreports.md).
+
 ### Ainda não implementados
 
-`image`, `barcode`, `qrcode` (Fase 6), `subreport` (Fase 4) e `table` já existem
-no schema, mas o motor ainda não os desenha. Um elemento não implementado
-**reserva o espaço dele** em vez de ser ignorado, então o layout ao redor
-continua correto enquanto a fase não chega.
+`image`, `barcode`, `qrcode` (Fase 6) e `table` já existem no schema, mas o
+motor ainda não os desenha. Um elemento não implementado **reserva o espaço
+dele** em vez de ser ignorado, então o layout ao redor continua correto
+enquanto a fase não chega.
 
 ## Estilo
 

@@ -8,6 +8,7 @@ import type {
 import { resolvePageSize } from '@treeport/schema';
 import { PageContext } from './page-context.js';
 import { renderBand, measureBand } from './band.js';
+import { renderSubreport } from './subreport.js';
 import type { FontSet, RenderElementContext } from './elements.js';
 import type { FormatOptions } from './format.js';
 import type { EvaluateOptions } from '../expressions/evaluate.js';
@@ -68,11 +69,17 @@ export async function renderReport(
    * corrente). Sem linhas, usa um contexto vazio.
    */
   const furnitureRow = dataSet.rows[0]?.data ?? {};
+  const furnitureResolved = dataSet.rows[0];
 
-  /** Monta o contexto de renderização para uma linha de dados. */
+  /**
+   * Monta o contexto de renderização para uma linha de dados.
+   * `resolvedRow` só existe quando a linha veio da árvore resolvida — é o que
+   * dá aos subreports acesso aos filhos aninhados.
+   */
   const contextFor = (
     pageCtx: PageContext,
     row: Record<string, unknown>,
+    resolvedRow?: ResolvedRow,
   ): RenderElementContext => ({
     ctx: pageCtx,
     fonts,
@@ -81,6 +88,8 @@ export async function renderReport(
       current: row,
       ...(options.parameters ? { parameters: options.parameters } : {}),
     },
+    renderSubreport,
+    ...(resolvedRow ? { resolvedRow } : {}),
     ...(options.formatOptions ? { formatOptions: options.formatOptions } : {}),
     ...(options.expressionOptions ? { expressionOptions: options.expressionOptions } : {}),
   });
@@ -92,7 +101,7 @@ export async function renderReport(
     margins,
     onPageStart: async (pageCtx) => {
       if (!header) return;
-      await renderBand(header, margins.top, contextFor(pageCtx, furnitureRow));
+      await renderBand(header, margins.top, contextFor(pageCtx, furnitureRow, furnitureResolved));
     },
     onPageEnd: async (pageCtx) => {
       if (!footer) return;
@@ -100,7 +109,7 @@ export async function renderReport(
       await renderBand(
         footer,
         height - margins.bottom - footerHeight,
-        contextFor(pageCtx, furnitureRow),
+        contextFor(pageCtx, furnitureRow, furnitureResolved),
       );
     },
   });
@@ -110,11 +119,14 @@ export async function renderReport(
   ctx.y = margins.top + headerHeight;
 
   const details = template.bands.details;
-  const detailHeight = measureBand(details);
 
   for (const row of dataSet.rows) {
-    await placeDetail(ctx, row, detailHeight, headerHeight, footerHeight, async (y) =>
-      renderBand(details, y, contextFor(ctx, row.data)),
+    // a altura precisa ser medida POR LINHA: uma banda com subreport dentro
+    // cresce conforme a quantidade de filhos daquela linha específica
+    const detailHeight = measureBand(details, row);
+
+    await placeDetail(ctx, detailHeight, headerHeight, footerHeight, async (y) =>
+      renderBand(details, y, contextFor(ctx, row.data, row)),
     );
   }
 
@@ -128,15 +140,19 @@ export async function renderReport(
  */
 async function placeDetail(
   ctx: PageContext,
-  _row: ResolvedRow,
   detailHeight: number,
   headerHeight: number,
   footerHeight: number,
   draw: (y: number) => Promise<number>,
 ): Promise<void> {
   const limit = ctx.height - ctx.margins.bottom - footerHeight;
+  const usableHeight = limit - ctx.margins.top - headerHeight;
 
-  if (ctx.y + detailHeight > limit) {
+  // um bloco maior que a página inteira nunca vai caber: quebrar aqui só
+  // geraria uma página em branco antes dele
+  const fitsInAPage = detailHeight <= usableHeight;
+
+  if (fitsInAPage && ctx.y + detailHeight > limit) {
     await ctx.newPage();
     ctx.y = ctx.margins.top + headerHeight;
   }

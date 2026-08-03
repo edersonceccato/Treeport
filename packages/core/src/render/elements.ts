@@ -6,6 +6,8 @@ import type {
   LineElement,
   RectElement,
   ReportElement,
+  ResolvedRow,
+  SubreportElement,
 } from '@treeport/schema';
 import type { PageContext } from './page-context.js';
 import { formatValue, type FormatOptions } from './format.js';
@@ -44,6 +46,22 @@ export interface RenderElementContext {
    */
   scope?: ExpressionScope;
   expressionOptions?: EvaluateOptions;
+  /**
+   * A linha resolvida completa (com os filhos aninhados). Só é necessária
+   * quando a banda contém um `SubreportElement`, que precisa alcançar
+   * `row.children[nodeId]`.
+   */
+  resolvedRow?: ResolvedRow;
+  /**
+   * Como renderizar um subreport. Injetado pelo renderer para quebrar a
+   * dependência circular — `elements` desenha os elementos e `subreport`
+   * desenha bandas, que por sua vez contêm elementos.
+   */
+  renderSubreport?: (
+    element: SubreportElement,
+    absoluteY: number,
+    context: RenderElementContext,
+  ) => Promise<number>;
 }
 
 const DEFAULT_FONT_SIZE = 10;
@@ -78,9 +96,15 @@ export async function renderElement(
     case 'line':
       return renderLine(element, absoluteY, context);
 
+    case 'subreport':
+      // delegado ao renderer, que sabe desenhar bandas (ver `renderSubreport`)
+      return context.renderSubreport
+        ? context.renderSubreport(element, absoluteY, context)
+        : element.height;
+
     // Os demais tipos entram nas fases seguintes (imagem/barcode/qrcode na
-    // Fase 6, subreport na Fase 4, table depois). Ignorar em silêncio aqui
-    // seria pior que reservar o espaço: o layout continua correto.
+    // Fase 6, table depois). Ignorar em silêncio aqui seria pior que reservar
+    // o espaço: o layout continua correto.
     default:
       return element.height;
   }

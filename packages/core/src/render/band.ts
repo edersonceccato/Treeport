@@ -1,6 +1,7 @@
-import type { Band } from '@treeport/schema';
+import type { Band, ResolvedRow } from '@treeport/schema';
 import type { PageContext } from './page-context.js';
 import { renderElement, type RenderElementContext } from './elements.js';
+import { measureSubreport } from './subreport.js';
 
 /**
  * Renderização de uma banda.
@@ -29,12 +30,14 @@ export async function renderBand(
     const elementY = absoluteY + element.y + offset;
     const used = await renderElement(element, elementY, context);
 
+    // a base deste elemento usa o offset com que ele foi DESENHADO; o
+    // crescimento dele entra no offset só depois, para os elementos seguintes
+    const bottom = element.y + offset + used;
+    if (bottom > maxBottom) maxBottom = bottom;
+
     if (element.canGrow && used > element.height) {
       offset += used - element.height;
     }
-
-    const bottom = element.y + offset + used;
-    if (bottom > maxBottom) maxBottom = bottom;
   }
 
   return maxBottom;
@@ -45,11 +48,32 @@ export async function renderBand(
  *
  * Usado para decidir a quebra de página ANTES de começar a desenhar — sem
  * isso, metade de uma banda ficaria numa página e metade na outra.
- * Nesta fase é a altura nominal; a Fase 5 refina para considerar o
- * crescimento real dos elementos.
+ *
+ * Com `row`, mede também os subreports dentro da banda, cuja altura depende de
+ * quantas linhas aquele nó devolveu para aquela linha específica do pai.
+ * A Fase 5 estende isso para o texto que cresce.
  */
-export function measureBand(band: Band): number {
-  return band.height;
+export function measureBand(band: Band, row?: ResolvedRow): number {
+  if (!row) return band.height;
+
+  let maxBottom = band.height;
+  let offset = 0;
+
+  for (const element of [...band.elements].sort((a, b) => a.y - b.y)) {
+    if (element.type !== 'subreport') continue;
+
+    const used = measureSubreport(element, row);
+
+    // o offset acumulado desloca ESTE elemento (por causa dos anteriores que
+    // cresceram); o crescimento dele só entra no offset depois, para os
+    // seguintes — somar antes contaria o mesmo crescimento duas vezes
+    const bottom = element.y + offset + used;
+    if (bottom > maxBottom) maxBottom = bottom;
+
+    if (element.canGrow && used > element.height) offset += used - element.height;
+  }
+
+  return maxBottom;
 }
 
 /** Espaço vertical fixo que header e footer reservam em toda página. */
