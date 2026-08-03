@@ -28,6 +28,14 @@ import {
   type ExplorerNode,
 } from './model/field-explorer.js';
 import { snapToGuides, type Guide } from './model/smart-guides.js';
+import {
+  evaluateExpression,
+  formatValue,
+  createAggregateFunctions,
+  type EvaluateOptions,
+  type ExpressionScope,
+  type ResolvedRow,
+} from '@treeport/schema';
 import { paginate, sampleRows, type PreviewPage } from './model/preview.js';
 import { snippetGroups } from './model/snippets.js';
 import { renderCode, peekCode, codeKey, isCodeError } from './model/code-preview.js';
@@ -106,6 +114,13 @@ export class TreeportDesigner extends LitElement {
     | undefined;
   private bandDrag:
     | { band: BandName; pointerId: number; startY: number; startHeight: number }
+    | undefined;
+  /** Linhas de amostra do preview, para calcular as agregações. */
+  private previewRows: Record<string, unknown>[] = [];
+
+  /** Rotação em curso pela alça (item 4). */
+  private rotateDrag:
+    | { elementId: string; pointerId: number; centerX: number; centerY: number; start: number }
     | undefined;
 
   constructor() {
@@ -350,6 +365,22 @@ export class TreeportDesigner extends LitElement {
   }
 
   private onPointerMove(event: PointerEvent): void {
+    if (this.rotateDrag?.pointerId === event.pointerId) {
+      const { centerX, centerY, elementId } = this.rotateDrag;
+
+      // ângulo do cursor em relação ao centro; -90 põe o zero para cima
+      const angle =
+        (Math.atan2(event.clientY - centerY, event.clientX - centerX) * 180) / Math.PI + 90;
+
+      // Shift trava de 15 em 15 graus, como em qualquer editor gráfico
+      const snapped = event.shiftKey ? Math.round(angle / 15) * 15 : Math.round(angle);
+
+      this.editor.updateElement(elementId, {
+        rotation: ((snapped % 360) + 360) % 360,
+      } as Partial<ReportElement>);
+      return;
+    }
+
     if (this.bandDrag && this.bandDrag.pointerId === event.pointerId) {
       const delta = (event.clientY - this.bandDrag.startY) / this.zoom;
       this.editor.setBandHeight(this.bandDrag.band, this.bandDrag.startHeight + delta);
@@ -398,6 +429,12 @@ export class TreeportDesigner extends LitElement {
   }
 
   private onPointerUp(event: PointerEvent): void {
+    if (this.rotateDrag?.pointerId === event.pointerId) {
+      this.rotateDrag = undefined;
+      this.editor.endBatch();
+      return;
+    }
+
     if (this.bandDrag?.pointerId === event.pointerId) {
       this.bandDrag = undefined;
       this.editor.endBatch();
@@ -1197,12 +1234,23 @@ export class TreeportDesigner extends LitElement {
     const common = `fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"
       ${dash ? `stroke-dasharray="${dash}"` : ''} vector-effect="non-scaling-stroke"`;
 
-    const body =
-      shape === 'ellipse'
-        ? `<ellipse cx="50" cy="50" rx="49" ry="49" ${common} />`
-        : shape === 'rectangle'
-          ? `<rect x="1" y="1" width="98" height="98" rx="${style.borderRadius ?? 0}" ${common} />`
-          : `<polygon points="${shapePoints(shape, (element as { points?: number }).points)}" ${common} />`;
+    const radius = style.borderRadius ?? 0;
+    const points = (element as { points?: number }).points;
+
+    let body: string;
+
+    if (shape === 'ellipse') {
+      body = `<ellipse cx="50" cy="50" rx="49" ry="49" ${common} />`;
+    } else if (shape === 'rectangle') {
+      // o raio é em PONTOS; o viewBox é 0..100, então converte pela dimensão
+      // real do elemento — senão um raio de 6pt viraria 6% e distorceria
+      const rx = element.width > 0 ? (radius / element.width) * 100 : 0;
+      const ry = element.height > 0 ? (radius / element.height) * 100 : 0;
+      body = `<rect x="1" y="1" width="98" height="98" rx="${rx.toFixed(2)}" ry="${ry.toFixed(2)}" ${common} />`;
+    } else {
+      // demais formas: um path com cantos arredondados de verdade (item 4)
+      body = `<path d="${roundedPolygonPath(shapePointList(shape, points), radius, element)}" ${common} />`;
+    }
 
     return html`
       <svg
@@ -1269,16 +1317,53 @@ export class TreeportDesigner extends LitElement {
   private renderHandles(element: ReportElement, band: BandName): TemplateResult {
     const handles: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 
-    return html`${handles.map(
-      (handle) => html`
-        <span
-          class="handle handle-${handle}"
-          style="cursor:${handleCursor(handle)}"
-          @pointerdown=${(e: PointerEvent) =>
-            this.onElementPointerDown(e, element, band, handle)}
-        ></span>
-      `,
-    )}`;
+    return html`
+      ${handles.map(
+        (handle) => html`
+          <span
+            class="handle handle-${handle}"
+            style="cursor:${handleCursor(handle)}"
+            @pointerdown=${(e: PointerEvent) =>
+              this.onElementPointerDown(e, element, band, handle)}
+          ></span>
+        `,
+      )}
+      ${element.type === 'shape'
+        ? html`
+            <span
+              class="handle handle-rotate"
+              data-tip="Arraste para girar"
+              @pointerdown=${(e: PointerEvent) => this.onRotateStart(e, element.id)}
+            ></span>
+          `
+        : ''}
+    `;
+  }
+
+  /** Começa a girar a forma pela alça acima dela (item 4). */
+  private onRotateStart(event: PointerEvent, elementId: string): void {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const element = this.editor.element(elementId);
+    if (!element || element.locked) return;
+
+    // o centro do elemento na tela é o eixo do giro
+    const target = (event.currentTarget as HTMLElement).parentElement;
+    if (!target) return;
+
+    const box = target.getBoundingClientRect();
+
+    this.rotateDrag = {
+      elementId,
+      pointerId: event.pointerId,
+      centerX: box.left + box.width / 2,
+      centerY: box.top + box.height / 2,
+      start: (element as { rotation?: number }).rotation ?? 0,
+    };
+
+    this.editor.beginBatch();
+    capturePointer(event);
   }
 
   private gridStyle(): string {
@@ -1989,6 +2074,10 @@ export class TreeportDesigner extends LitElement {
     const rows = sampleRows(fields.length ? fields : ['campo'], 25);
     const result = paginate(this.template, { rows });
 
+    // as agregações são calculadas de verdade sobre os dados de amostra, com
+    // o mesmo motor do servidor — mostrar "⟨sum⟩" não deixava conferir nada
+    this.previewRows = rows;
+
     return html`
       <div class="preview-scroll">
         ${result.pages.map((page) =>
@@ -2058,12 +2147,43 @@ export class TreeportDesigner extends LitElement {
             ? this.renderShapeSvg(element.shape, element)
             : element.type === 'barcode' || element.type === 'qrcode'
               ? this.renderCodeImage(element)
-              : previewText(element, row, pageNumber, totalPages)}
+              : previewText(element, row, pageNumber, totalPages, this.previewScope(row))}
       </div>
     `;
   }
 
   // --- utilidades -----------------------------------------------------------
+
+  /**
+   * Escopo de avaliação do preview: a linha atual, os parâmetros e as
+   * agregações sobre as linhas de amostra.
+   */
+  private previewScope(row: Record<string, unknown>): {
+    scope: ExpressionScope;
+    options: EvaluateOptions;
+  } {
+    const resolved: ResolvedRow[] = this.previewRows.map((data) => ({ data, children: {} }));
+    const nodeId = this.currentNodeId() ?? 'ROOT';
+
+    return {
+      scope: { current: row },
+      options: {
+        strict: false,
+        functions: createAggregateFunctions({
+          rootRows: resolved,
+          currentNodeId: nodeId,
+          currentRows: resolved,
+          knownNodeIds: new Set(this.allNodeIds()),
+        }),
+      },
+    };
+  }
+
+  /** Todos os ids de consulta da árvore. */
+  private allNodeIds(): string[] {
+    if (!this.dataSource) return [];
+    return flattenExplorer(describeTree(this.dataSource)).map(({ node }) => node.id);
+  }
 
   private patch(elementId: string, patch: Record<string, unknown>): void {
     this.editor.updateElement(elementId, patch as Partial<ReportElement>);
@@ -2843,6 +2963,31 @@ export class TreeportDesigner extends LitElement {
       z-index: 6;
     }
 
+    .handle-rotate {
+      left: 50%;
+      top: -20px;
+      margin-left: -5px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--tp-accent);
+      border-color: #fff;
+      cursor: grab;
+    }
+
+    .handle-rotate::before {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 100%;
+      height: 12px;
+      border-left: 1px dashed var(--tp-accent);
+    }
+
+    .handle-rotate:active {
+      cursor: grabbing;
+    }
+
     .handle-nw { left: -4px; top: -4px; }
     .handle-n { left: 50%; top: -4px; margin-left: -3px; }
     .handle-ne { right: -4px; top: -4px; }
@@ -3274,15 +3419,33 @@ function previewText(
   row: Record<string, unknown>,
   pageNumber: number,
   totalPages: number,
+  evaluation?: { scope: ExpressionScope; options: EvaluateOptions },
 ): string {
   if (element.type === 'field') {
     const value = row[element.fieldName];
-    return value === undefined || value === null ? '' : String(value);
+    if (value === undefined || value === null) return '';
+    return formatValue(value, element.format);
   }
+
   if (element.type === 'aggregate') {
-    // sem dados reais no preview, mostra a fórmula em vez de um número falso
-    return `${element.prefix ?? ''}⟨${element.fn}⟩${element.suffix ?? ''}`;
+    // calcula de verdade com os dados de amostra, usando o mesmo motor do
+    // servidor — mostrar "⟨sum⟩" não deixava conferir o resultado (item 7)
+    const expression =
+      element.expression?.trim() ||
+      buildAggregateExpression(element.fn, element.dataSourceNodeId, element.fieldName);
+
+    let value: unknown = null;
+    if (evaluation) {
+      try {
+        value = evaluateExpression(expression, evaluation.scope, evaluation.options);
+      } catch {
+        value = null;
+      }
+    }
+
+    return `${element.prefix ?? ''}${formatValue(value, element.format)}${element.suffix ?? ''}`;
   }
+
   if (element.type !== 'label') return elementLabel(element);
 
   return element.content.replace(/\{\{([\s\S]*?)\}\}/g, (_m, raw: string) => {
@@ -3295,16 +3458,43 @@ function previewText(
     const direct = row[expression];
     if (direct !== undefined) return String(direct);
 
-    const inner = /^FORMAT\(\s*([A-Za-z_][A-Za-z0-9_]*)/.exec(expression);
-    if (inner?.[1] && row[inner[1]] !== undefined) return String(row[inner[1]]);
+    // avalia com o motor de verdade, incluindo agregações
+    if (evaluation) {
+      try {
+        const value = evaluateExpression(expression, evaluation.scope, evaluation.options);
+        if (value !== null && value !== undefined) return formatValue(value);
+      } catch {
+        // expressão incompleta enquanto se digita: mostra a origem
+      }
+    }
 
     return `⟨${expression}⟩`;
   });
 }
 
+/** Monta a chamada de agregação a partir dos campos do elemento. */
+function buildAggregateExpression(
+  fn: string,
+  nodeId: string | undefined,
+  fieldName: string | undefined,
+): string {
+  const name = { sum: 'SUM', count: 'COUNT', avg: 'AVG', min: 'MINOF', max: 'MAXOF' }[fn] ?? 'SUM';
+
+  if (nodeId && fieldName) return `${name}(${nodeId}.${fieldName})`;
+  if (nodeId) return `${name}(${nodeId})`;
+  if (fieldName) return `${name}(${fieldName})`;
+  return `${name}()`;
+}
+
 function elementStyle(element: ReportElement): string {
   const style = element.style;
   if (!style) return '';
+
+  // a forma é pintada pelo SVG interno; pintar o div faria o preenchimento
+  // aparecer no retângulo de fora em vez de dentro da geometria (item 2)
+  if (element.type === 'shape') {
+    return element.rotation ? `transform:rotate(${element.rotation}deg)` : '';
+  }
 
   const parts: string[] = [];
   if (style.fontSize) parts.push(`font-size:${style.fontSize}px`);
@@ -3379,6 +3569,74 @@ function shapePoints(shape: ShapeKind, points = 5): string {
     default:
       return '1,1 99,1 99,99 1,99';
   }
+}
+
+/** Pontos da forma como pares [x, y] em 0..100. */
+function shapePointList(shape: ShapeKind, points?: number): [number, number][] {
+  return shapePoints(shape, points)
+    .split(' ')
+    .map((pair) => {
+      const [x, y] = pair.split(',').map(Number);
+      return [x ?? 0, y ?? 0] as [number, number];
+    });
+}
+
+/**
+ * Path de um polígono com os cantos arredondados (item 4).
+ *
+ * Em cada vértice, recua um pouco pelos dois lados e liga os dois pontos com
+ * um arco — é assim que um canto redondo de verdade se faz. Recuar mais que
+ * metade do lado deformaria a figura, então o raio é limitado a isso.
+ */
+function roundedPolygonPath(
+  points: [number, number][],
+  radiusPt: number,
+  element: ReportElement,
+): string {
+  if (points.length < 3) return '';
+
+  // o raio vem em pontos; o viewBox é 0..100 em cada eixo
+  const scale = Math.min(element.width || 100, element.height || 100);
+  const radius = scale > 0 ? (radiusPt / scale) * 100 : 0;
+
+  if (radius <= 0.5) {
+    return `M ${points.map(([x, y]) => `${x} ${y}`).join(' L ')} Z`;
+  }
+
+  const parts: string[] = [];
+
+  for (let i = 0; i < points.length; i += 1) {
+    const prev = points[(i - 1 + points.length) % points.length]!;
+    const curr = points[i]!;
+    const next = points[(i + 1) % points.length]!;
+
+    const toPrev = norm(prev[0] - curr[0], prev[1] - curr[1]);
+    const toNext = norm(next[0] - curr[0], next[1] - curr[1]);
+
+    // não recua mais que metade de cada lado adjacente
+    const limit = Math.min(toPrev.length, toNext.length) / 2;
+    const r = Math.min(radius, limit);
+
+    const start: [number, number] = [curr[0] + toPrev.x * r, curr[1] + toPrev.y * r];
+    const end: [number, number] = [curr[0] + toNext.x * r, curr[1] + toNext.y * r];
+
+    parts.push(
+      i === 0 ? `M ${fmt(start)}` : `L ${fmt(start)}`,
+      // o próprio vértice é o ponto de controle da curva
+      `Q ${curr[0].toFixed(2)} ${curr[1].toFixed(2)} ${fmt(end)}`,
+    );
+  }
+
+  return `${parts.join(' ')} Z`;
+}
+
+function norm(dx: number, dy: number): { x: number; y: number; length: number } {
+  const length = Math.hypot(dx, dy) || 1;
+  return { x: dx / length, y: dy / length, length };
+}
+
+function fmt(point: [number, number]): string {
+  return `${point[0].toFixed(2)} ${point[1].toFixed(2)}`;
 }
 
 /** Encurta um rótulo longo, mantendo o começo, que é o que identifica. */
