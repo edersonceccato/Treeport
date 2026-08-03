@@ -1,6 +1,9 @@
 import type { ResolvedRow, SubreportElement } from '@treeport/schema';
-import { renderBand, measureBand } from './band.js';
-import type { RenderElementContext } from './elements.js';
+import { renderBand } from './band.js';
+import type { FontSet, RenderElementContext } from './elements.js';
+import { measureBandContent, type MeasureContext } from './measure.js';
+import type { FormatOptions } from './format.js';
+import type { EvaluateOptions, ExpressionScope } from '../expressions/evaluate.js';
 
 /**
  * Renderização de subreports (Fase 4 / Anexo C do brief).
@@ -35,12 +38,17 @@ export async function renderSubreport(
   const bands = element.template;
   let y = absoluteY;
 
+  // as bandas do subreport encolhem para o conteúdo: a altura nominal delas é
+  // o espaço de design, não um espaçamento fixo a ser preservado. Sem isso, um
+  // nó com poucas linhas deixa um buraco até a altura declarada.
+  const shrink = { shrinkToContent: true };
+
   if (bands.header) {
-    y += await renderBand(bands.header, y, childContext(context, rows[0]!));
+    y += await renderBand(bands.header, y, childContext(context, rows[0]!), shrink);
   }
 
   for (const row of rows) {
-    y += await renderBand(bands.details, y, childContext(context, row));
+    y += await renderBand(bands.details, y, childContext(context, row), shrink);
   }
 
   if (bands.footer) {
@@ -50,11 +58,13 @@ export async function renderSubreport(
       bands.footer,
       y,
       childContext(context, rows[rows.length - 1]!),
+      shrink,
     );
   }
 
-  const used = y - absoluteY;
-  return Math.max(used, element.height);
+  // ocupa exatamente o que o conteúdo pediu — tem que casar com
+  // `measureSubreport`, senão a quebra de página erra o cálculo
+  return y - absoluteY;
 }
 
 /**
@@ -108,6 +118,7 @@ function childContext(
 export function measureSubreport(
   element: SubreportElement,
   resolvedRow: ResolvedRow | undefined,
+  context?: SubreportMeasureContext,
 ): number {
   const rows = resolvedRow?.children[element.dataSourceNodeId] ?? [];
   if (rows.length === 0) return element.height;
@@ -115,11 +126,51 @@ export function measureSubreport(
   const bands = element.template;
   let total = 0;
 
-  // `measureBand` mede recursivamente os subreports aninhados dentro de cada
-  // banda, então a soma cobre a árvore inteira em qualquer profundidade
-  if (bands.header) total += measureBand(bands.header, rows[0]!);
-  for (const row of rows) total += measureBand(bands.details, row);
-  if (bands.footer) total += measureBand(bands.footer, rows[rows.length - 1]!);
+  // mede cada banda com o mesmo caminho da renderização (texto que quebra,
+  // subreports aninhados, cascata), recursivamente em qualquer profundidade
+  const measure = (band: Parameters<typeof measureBandContent>[0], row: ResolvedRow): number =>
+    measureBandContent(band, subContext(context, row), { shrinkToContent: true });
 
-  return Math.max(total, element.height);
+  if (bands.header) total += measure(bands.header, rows[0]!);
+  for (const row of rows) total += measure(bands.details, row);
+  if (bands.footer) total += measure(bands.footer, rows[rows.length - 1]!);
+
+  // o subreport ocupa o que o conteúdo pede; a `height` do elemento é só o
+  // espaço reservado no design quando não há linhas
+  return total;
+}
+
+/** O que `measureSubreport` precisa para medir texto (fontes, escopo). */
+export interface SubreportMeasureContext {
+  /** Ausente quando só a geometria importa (sem medir quebra de texto). */
+  fonts?: FontSet | undefined;
+  scope?: ExpressionScope;
+  formatOptions?: FormatOptions;
+  expressionOptions?: EvaluateOptions;
+}
+
+/**
+ * Contexto de medição para uma linha do subreport, encadeando o escopo do pai
+ * — igual ao `childContext` da renderização, para as duas medirem o mesmo.
+ *
+ * Sem `context` (chamada sem fontes), mede só a geometria: subreports
+ * aninhados e alturas nominais, sem quebra de texto.
+ */
+function subContext(
+  context: SubreportMeasureContext | undefined,
+  row: ResolvedRow,
+): MeasureContext {
+  const parentScope = context?.scope;
+  return {
+    ...(context?.fonts ? { fonts: context.fonts } : {}),
+    row: row.data,
+    resolvedRow: row,
+    scope: {
+      current: row.data,
+      ...(parentScope ? { parent: parentScope } : {}),
+      ...(parentScope?.parameters ? { parameters: parentScope.parameters } : {}),
+    },
+    ...(context?.formatOptions ? { formatOptions: context.formatOptions } : {}),
+    ...(context?.expressionOptions ? { expressionOptions: context.expressionOptions } : {}),
+  };
 }

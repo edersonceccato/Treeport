@@ -511,10 +511,12 @@ describe('measureSubreport', () => {
     expect(measureSubreport(subreport, undefined)).toBe(20);
   });
 
-  it('nunca devolve menos que a altura nominal', () => {
+  it('com linhas, ocupa o conteúdo e não a altura nominal', () => {
+    // Fase 5: a `height` do elemento é o espaço reservado no design; havendo
+    // linhas, o subreport ocupa exatamente o que elas pedem. Sem isso, um nó
+    // com poucas linhas deixaria um buraco até a altura declarada.
     const uma = row({ id: 10 }, { OFFER_FEE: [row({})] });
-    // 1 linha x 10pt = 10, mas a altura nominal é 20
-    expect(measureSubreport(subreport, uma)).toBe(20);
+    expect(measureSubreport(subreport, uma)).toBe(10);
   });
 
   it('soma os subreports aninhados', () => {

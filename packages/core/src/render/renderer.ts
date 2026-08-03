@@ -9,6 +9,7 @@ import { resolvePageSize } from '@treeport/schema';
 import { PageContext } from './page-context.js';
 import { renderBand, measureBand } from './band.js';
 import { renderSubreport } from './subreport.js';
+import { measureBandContent } from './measure.js';
 import type { FontSet, RenderElementContext } from './elements.js';
 import type { FormatOptions } from './format.js';
 import type { EvaluateOptions } from '../expressions/evaluate.js';
@@ -122,8 +123,18 @@ export async function renderReport(
 
   for (const row of dataSet.rows) {
     // a altura precisa ser medida POR LINHA: uma banda com subreport dentro
-    // cresce conforme a quantidade de filhos daquela linha específica
-    const detailHeight = measureBand(details, row);
+    // (ou com texto que quebra) cresce conforme os dados daquela linha
+    const detailHeight = measureBandContent(details, {
+      fonts,
+      row: row.data,
+      resolvedRow: row,
+      scope: {
+        current: row.data,
+        ...(options.parameters ? { parameters: options.parameters } : {}),
+      },
+      ...(options.formatOptions ? { formatOptions: options.formatOptions } : {}),
+      ...(options.expressionOptions ? { expressionOptions: options.expressionOptions } : {}),
+    });
 
     await placeDetail(ctx, detailHeight, headerHeight, footerHeight, async (y) =>
       renderBand(details, y, contextFor(ctx, row.data, row)),

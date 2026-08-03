@@ -71,6 +71,10 @@ export type { GenerateReportOptions } from './render/generate.js';
 
 export { renderBand, measureBand } from './render/band.js';
 export { renderSubreport, measureSubreport } from './render/subreport.js';
+export type { SubreportMeasureContext } from './render/subreport.js';
+export { measureElement, measureBandContent } from './render/measure.js';
+export type { MeasureContext } from './render/measure.js';
+export type { BandRenderOptions } from './render/band.js';
 export { renderElement, pickFont } from './render/elements.js';
 export type { FontSet, RenderElementContext } from './render/elements.js';
 

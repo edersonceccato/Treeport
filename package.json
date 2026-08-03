@@ -11,7 +11,8 @@
     "example:phase1": "vite-node packages/core/examples/proposal-offer-fees.ts",
     "example:phase2": "vite-node packages/core/examples/fee-list-pdf.ts",
     "example:phase3": "vite-node packages/core/examples/expressions-pdf.ts",
-    "example:phase4": "vite-node packages/core/examples/proposal-subreports-pdf.ts"
+    "example:phase4": "vite-node packages/core/examples/proposal-subreports-pdf.ts",
+    "example:phase5": "vite-node packages/core/examples/autogrow-pdf.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

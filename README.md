@@ -22,7 +22,7 @@ O que diferencia:
 
 ## Status
 
-🚧 Em construção, por fases. **Fase 4 concluída: subreports aninhados.**
+🚧 Em construção, por fases. **Fase 5 concluída: auto-grow em cascata.**
 
 | Fase | Escopo | Status |
 |---|---|---|
@@ -30,7 +30,7 @@ O que diferencia:
 | 2 | Renderização PDF básica (Header/Details/Footer, Label/Field) | ✅ |
 | 3 | Motor de expressões `{{...}}` | ✅ |
 | 4 | Subreports aninhados | ✅ |
-| 5 | Auto-grow em cascata | ⬜ |
+| 5 | Auto-grow em cascata | ✅ |
 | 6 | Barcode e QRCode | ⬜ |
 | 7 | Metadados de controle (`__block`, `__templateId`) e contexto | ⬜ |
 | 8 | Adapters de banco reais (Postgres primeiro) | ⬜ |
@@ -158,6 +158,7 @@ pnpm example:phase1  # árvore de dados de 3 níveis (imprime no console)
 pnpm example:phase2  # gera um PDF de 2 páginas em examples/output/
 pnpm example:phase3  # PDF com labels calculados por expressão
 pnpm example:phase4  # proposta > ofertas > taxas/embalagens (3 níveis)
+pnpm example:phase5  # blocos que crescem e empurram o que vem depois
 ```
 
 ## Documentação
@@ -166,6 +167,7 @@ pnpm example:phase4  # proposta > ofertas > taxas/embalagens (3 níveis)
 - [Template](docs/template-schema.md) — bandas, elementos, estilos, máscaras de formato
 - [Expressões](docs/expressions.md) — sintaxe `{{...}}`, funções, escopo `parent`
 - [Subreports](docs/subreports.md) — nós aninhados, auto-grow, quebra de página
+- [Auto-grow](docs/auto-grow.md) — `canGrow`, deslocamento em cascata, medição
 
 Os demais documentos (`storage.md`, `designer-ui.md`) entram junto com as fases
 correspondentes.

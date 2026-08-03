@@ -19,12 +19,16 @@ export async function renderBand(
   band: Band,
   absoluteY: number,
   context: RenderElementContext,
+  options: BandRenderOptions = {},
 ): Promise<number> {
   // ordena por Y de origem para o offset acumulado fazer sentido
   const ordered = [...band.elements].sort((a, b) => a.y - b.y);
 
   let offset = 0;
-  let maxBottom = band.height;
+  // sem shrinkToContent, `band.height` é piso (a banda serve de espaçamento
+  // fixo entre registros); com ele, a banda vale o que o conteúdo pediu
+  let maxBottom = options.shrinkToContent ? 0 : band.height;
+  const hasGrowingElement = ordered.some((e) => e.canGrow);
 
   for (const element of ordered) {
     const elementY = absoluteY + element.y + offset;
@@ -35,9 +39,16 @@ export async function renderBand(
     const bottom = element.y + offset + used;
     if (bottom > maxBottom) maxBottom = bottom;
 
-    if (element.canGrow && used > element.height) {
-      offset += used - element.height;
+    if (element.canGrow) {
+      const delta = used - element.height;
+      if (delta > 0 || options.shrinkToContent) offset += delta;
     }
+  }
+
+  // banda sem elemento variável mantém a altura de design mesmo em modo
+  // encolhível — senão viraria zero e os registros colariam
+  if (options.shrinkToContent && !hasGrowingElement) {
+    return Math.max(maxBottom, band.height);
   }
 
   return maxBottom;
@@ -74,6 +85,16 @@ export function measureBand(band: Band, row?: ResolvedRow): number {
   }
 
   return maxBottom;
+}
+
+/** Opções de renderização de uma banda. */
+export interface BandRenderOptions {
+  /**
+   * Permite a banda ocupar MENOS que `band.height` quando o conteúdo não a
+   * preenche. Default: false, para não mudar o layout de quem já depende da
+   * altura fixa como espaçamento.
+   */
+  shrinkToContent?: boolean;
 }
 
 /** Espaço vertical fixo que header e footer reservam em toda página. */
