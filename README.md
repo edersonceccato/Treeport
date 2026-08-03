@@ -22,7 +22,7 @@ O que diferencia:
 
 ## Status
 
-🚧 Em construção, por fases. **Fase 7 concluída: metadados de controle.**
+🚧 Em construção, por fases. **Fase 8 concluída: adapter PostgreSQL.**
 
 | Fase | Escopo | Status |
 |---|---|---|
@@ -33,7 +33,7 @@ O que diferencia:
 | 5 | Auto-grow em cascata | ✅ |
 | 6 | Barcode e QRCode | ✅ |
 | 7 | Metadados de controle (`__block`, `__templateId`) e contexto | ✅ |
-| 8 | Adapters de banco reais (Postgres primeiro) | ⬜ |
+| 8 | Adapters de banco reais (Postgres primeiro) | ✅ |
 | 9 | Designer visual web (Web Component) | ⬜ |
 | 10 | Persistência e documentação final | ⬜ |
 
@@ -44,6 +44,7 @@ O que diferencia:
 | `@treeport/schema` | qualquer lugar | Tipos e validação compartilhados — a "spec" |
 | `@treeport/core` | backend | Árvore de dados, expressões, renderização PDF |
 | `@treeport/designer` | frontend | Designer drag-and-drop (Web Component) |
+| `@treeport/adapter-postgres` | backend | Adapter PostgreSQL (opcional) |
 
 `core` e `designer` não dependem um do outro em runtime: compartilham só o
 schema JSON do `Template`/`DataSourceTree` como contrato.
@@ -130,22 +131,17 @@ for (const proposal of dataSet.rows) {
 }
 ```
 
-Conectando num banco de verdade, o `executor` é só isto:
+Conectando num Postgres de verdade:
 
 ```ts
 import { Pool } from 'pg';
-import { normalizeNamedParameters, buildPositionalValues } from '@treeport/core';
+import { createPostgresExecutor } from '@treeport/adapter-postgres';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-
-const executor = {
-  async execute(sql: string, params: Record<string, unknown>) {
-    const { sql: text, order } = normalizeNamedParameters(sql, 'numbered');
-    const { rows } = await pool.query(text, buildPositionalValues(order, params));
-    return rows;
-  },
-};
+const executor = createPostgresExecutor(pool);
 ```
+
+Outro banco? O adapter é um método só — ver [adapters.md](docs/adapters.md).
 
 ## Desenvolvimento
 
@@ -161,6 +157,10 @@ pnpm example:phase4  # proposta > ofertas > taxas/embalagens (3 níveis)
 pnpm example:phase5  # blocos que crescem e empurram o que vem depois
 pnpm example:phase6  # etiquetas com Code 128, EAN-13 e QR de rastreio
 pnpm example:phase7  # a query escolhe o layout e bloqueia emissão inválida
+
+pnpm pg:up           # sobe um Postgres descartável (Docker)
+pnpm test:pg         # roda a suíte incluindo a integração com Postgres
+pnpm pg:down
 ```
 
 ## Documentação
@@ -172,6 +172,7 @@ pnpm example:phase7  # a query escolhe o layout e bloqueia emissão inválida
 - [Auto-grow](docs/auto-grow.md) — `canGrow`, deslocamento em cascata, medição
 - [Códigos e imagens](docs/barcodes.md) — barcode, QR Code, `ImageElement`
 - [Campos de controle](docs/control-fields.md) — `__block`, `__templateId`, contextos
+- [Adapters de banco](docs/adapters.md) — PostgreSQL e como escrever o seu
 
 Os demais documentos (`storage.md`, `designer-ui.md`) entram junto com as fases
 correspondentes.

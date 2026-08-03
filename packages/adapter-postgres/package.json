@@ -1,0 +1,27 @@
+{
+  "name": "@treeport/adapter-postgres",
+  "version": "0.1.0",
+  "description": "Adapter PostgreSQL para o Treeport. Traduz o contrato Executor para o driver pg.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "typecheck": "tsc -b tsconfig.json"
+  },
+  "dependencies": {
+    "@treeport/core": "workspace:*",
+    "@treeport/schema": "workspace:*"
+  },
+  "peerDependencies": {
+    "pg": ">=8"
+  },
+  "license": "MIT"
+}

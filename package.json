@@ -14,13 +14,19 @@
     "example:phase4": "vite-node packages/core/examples/proposal-subreports-pdf.ts",
     "example:phase5": "vite-node packages/core/examples/autogrow-pdf.ts",
     "example:phase6": "vite-node packages/core/examples/barcode-pdf.ts",
-    "example:phase7": "vite-node packages/core/examples/control-fields.ts"
+    "example:phase7": "vite-node packages/core/examples/control-fields.ts",
+    "example:phase8": "vite-node packages/adapter-postgres/examples/postgres-report.ts",
+    "test:pg": "TREEPORT_TEST_DATABASE_URL=postgres://postgres:treeport@localhost:55432/treeport vitest run",
+    "pg:up": "docker run -d --rm --name treeport-pg -e POSTGRES_PASSWORD=treeport -e POSTGRES_DB=treeport -p 55432:5432 postgres:16-alpine",
+    "pg:down": "docker stop treeport-pg"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "@types/pg": "^8.20.3",
     "@types/pngjs": "^6.0.5",
     "jsqr": "^1.4.0",
     "pdfjs-dist": "^6.2.108",
+    "pg": "^8.22.0",
     "pngjs": "^7.0.0",
     "typescript": "^5.7.2",
     "vite-node": "^6.0.0",

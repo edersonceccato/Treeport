@@ -7,3 +7,4 @@ coverage/
 
 # PDFs gerados pelos exemplos
 packages/core/examples/output/
+packages/adapter-postgres/examples/output/
