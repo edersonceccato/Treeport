@@ -9,6 +9,8 @@ import {
   sampleRows,
   SNIPPETS,
   findSnippet,
+  suggestFormats,
+  guessFieldKind,
   type Box,
 } from '../src/index.js';
 
@@ -406,5 +408,47 @@ describe('componentes prontos', () => {
     const ids = new Set(Array.from({ length: 10 }, () => snippet.create(0, 0, 515).id));
 
     expect(ids.size).toBeGreaterThan(8);
+  });
+});
+
+// --- formatos sugeridos (item 20) -------------------------------------------
+
+describe('formatos sugeridos por tipo de campo', () => {
+  it('campo de valor sugere máscaras de moeda', () => {
+    const formatos = suggestFormats('valor_total');
+
+    expect(guessFieldKind('valor_total')).toBe('currency');
+    expect(formatos.map((f) => f.mask)).toContain('#,##0.00');
+    expect(formatos.some((f) => f.mask.includes('R$'))).toBe(true);
+  });
+
+  it('campo de data sugere máscaras de data', () => {
+    expect(guessFieldKind('data_emissao')).toBe('date');
+    expect(suggestFormats('data_emissao').map((f) => f.mask)).toContain('dd/MM/yyyy');
+  });
+
+  it('campo com hora sugere data e hora', () => {
+    expect(guessFieldKind('created_at')).toBe('datetime');
+  });
+
+  it('quantidade é número, não moeda', () => {
+    expect(guessFieldKind('quantidade')).toBe('number');
+  });
+
+  it('nome de cliente é texto e não sugere máscara', () => {
+    expect(guessFieldKind('cliente')).toBe('text');
+    expect(suggestFormats('cliente')).toEqual([]);
+  });
+
+  it('o valor de amostra manda sobre o nome', () => {
+    // um campo chamado "codigo" que traz Date é data
+    expect(guessFieldKind('codigo', new Date())).toBe('date');
+  });
+
+  it('toda sugestão traz um exemplo do resultado', () => {
+    for (const f of suggestFormats('valor')) {
+      expect(f.example).toBeTruthy();
+      expect(f.label).toBeTruthy();
+    }
   });
 });

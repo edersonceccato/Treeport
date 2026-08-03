@@ -168,17 +168,78 @@ o layout sem gerar PDF nem precisar de servidor.
 Não é o PDF final — fontes do browser e do pdf-lib diferem um pouco. Para o
 resultado exato, use `POST /report-templates/:id/preview`.
 
+## Formas
+
+O componente **Forma** oferece retângulo, círculo/elipse, triângulo, losango,
+estrela (com número de pontas ajustável), pentágono, hexágono e seta. Todas
+aceitam preenchimento, borda (contínua, tracejada ou pontilhada), espessura e
+rotação; o retângulo aceita cantos arredondados.
+
+O que aparece no designer é um SVG com a mesma geometria que o motor desenha
+no PDF — se divergissem, você desenharia uma coisa e imprimiria outra.
+
+## Códigos de barras e QR
+
+O designer gera o código **de verdade**, com a mesma biblioteca que o motor usa
+no servidor. Um valor inválido mostra o motivo em vez de um retângulo cinza.
+
+**15 simbologias:** Code 128, Code 39, Code 93, EAN-13, EAN-8, UPC-A, UPC-E,
+ITF-14, Intercalado 2 de 5, Codabar, MSI, Pharmacode, e as 2D DataMatrix,
+PDF417 e Aztec.
+
+O **QR** não precisa de um tipo diferente para cada uso — ele codifica texto, e
+o que muda é a sintaxe. O campo "Conteúdo" monta essa sintaxe:
+
+| Tipo | Vira |
+|---|---|
+| Site / URL | `https://…` (o protocolo é acrescentado se faltar) |
+| E-mail | `mailto:…?subject=…` |
+| Telefone | `tel:…` |
+| SMS | `SMSTO:numero:mensagem` |
+| Wi-Fi | `WIFI:T:WPA;S:rede;P:senha;;` |
+| Contato | vCard 3.0 |
+| Localização | `geo:lat,long` |
+
+Também dá para ajustar a correção de erro (L/M/Q/H) e as cores. Fundo claro e
+contraste alto não é estética: é o que o leitor óptico precisa.
+
+## Totalizador
+
+Soma, conta, tira média, mínimo ou máximo de um campo — de **qualquer**
+consulta da árvore, não só da banda onde está.
+
+Para combinar consultas diferentes, use o campo "Cálculo entre consultas":
+
+```
+{{SUM('ITEM','valor') / COUNT('PEDIDO')}}      ticket médio
+{{COUNTDISTINCT('PEDIDO','cliente')}}          quantos clientes
+{{SUM('ITEM','valor') / COUNTDISTINCT('PEDIDO','cliente')}}   média por cliente
+```
+
+Funções disponíveis: `SUM`, `COUNT`, `AVG`, `MINOF`, `MAXOF`,
+`COUNTDISTINCT`. O primeiro argumento é o id da consulta; com um argumento só,
+o Treeport descobre se é consulta ou campo comparando com a árvore.
+
 ## Componentes prontos
 
 A seção "Prontos" da paleta traz blocos que todo relatório precisa:
 
-| Componente | O que insere |
-|---|---|
-| Página X de Y | `{{sys.pageNumber}}` e `{{sys.totalPages}}` |
-| Nº da página | Só o número atual |
-| Data de emissão | `{{FORMAT(sys.now, 'dd/MM/yyyy HH:mm')}}` |
-| Bloco de título | Região com título, subtítulo e régua |
-| Caixa de total | Região com fundo, rótulo e valor |
+| Grupo | Componente | O que insere |
+|---|---|---|
+| Página | Página X de Y | `{{sys.pageNumber}}` e `{{sys.totalPages}}` |
+| Página | Nº da página | Só o número atual |
+| Página | Data de emissão | `{{FORMAT(sys.now, 'dd/MM/yyyy HH:mm')}}` |
+| Blocos | Bloco de título | Região com título, subtítulo e régua |
+| Blocos | Caixa de total | Região com fundo, rótulo e valor |
+| Blocos | **Tabela de itens** | Subrelatório com cabeçalho, linhas e total |
+| Blocos | Cabeçalho de colunas | Faixa com títulos e régua |
+| Blocos | Linha de assinatura | Traço com nome embaixo |
+| Totais | Soma / Contagem / Média | Totalizadores prontos |
+| Códigos | QR do documento | QR com URL montada por expressão |
+| Códigos | Código de barras | Code 128 com dígitos legíveis |
+
+Clique num componente para inserir na banda ativa, ou arraste para posicionar
+onde quiser.
 
 ### Variáveis de sistema
 
@@ -275,6 +336,18 @@ Os campos de um nó vêm de `fields` (o backend informou), de `sampleRow`, ou
 como último recurso são extraídos do `SELECT`. Com `SELECT *` a lista fica
 vazia de propósito: devolver nomes adivinhados seria pior que não devolver
 nada — o usuário confiaria num campo que não existe.
+
+## Subrelatórios: onde vai o que repete
+
+**Tudo que tem mais de uma linha deve morar num subrelatório.** É ele que tem
+cabeçalho, corpo e rodapé próprios: o cabeçalho aparece uma vez com os títulos
+das colunas, o corpo repete por linha, e o rodapé fecha com os totais. Assim a
+página principal fica limpa e cada detalhe fica no seu bloco.
+
+O componente pronto **Tabela de itens** já vem montado nesse formato.
+
+Duplo clique na aba renomeia o subrelatório; o nome aparece encurtado, com o
+nome completo e a consulta no tooltip.
 
 ## Subrelatórios: abas de design
 

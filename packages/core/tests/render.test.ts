@@ -457,3 +457,175 @@ describe('região e visibilidade', () => {
     expect(pdf.pages[1]!.text).toContain('Pagina 2 de 2');
   });
 });
+
+describe('formas e totalizador', () => {
+  it('desenha as formas geométricas no PDF', async () => {
+    const bytes = await renderReport(
+      {
+        id: 't',
+        name: 'T',
+        boundDataSourceNodeId: 'N',
+        pageSize: 'A4',
+        bands: {
+          details: {
+            height: 100,
+            elements: (
+              ['star', 'triangle', 'hexagon', 'ellipse', 'diamond', 'arrow'] as const
+            ).map((shape, i) => ({
+              id: shape,
+              type: 'shape' as const,
+              x: i * 70,
+              y: 0,
+              width: 60,
+              height: 60,
+              shape,
+              style: { backgroundColor: '#3b82f6' },
+            })),
+          },
+        },
+      },
+      dataSet([{}]),
+    );
+
+    expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe('%PDF-');
+    expect((await inspectPdf(bytes)).pageCount).toBe(1);
+  });
+
+  it('agrega valores de um nó filho', async () => {
+    const dados: ResolvedDataSet = {
+      nodeId: 'PEDIDO',
+      rows: [
+        {
+          data: { cliente: 'Acme' },
+          children: {
+            ITEM: [
+              { data: { valor: 100 }, children: {} },
+              { data: { valor: 250 }, children: {} },
+            ],
+          },
+        },
+      ],
+    };
+
+    const bytes = await renderReport(
+      {
+        id: 't',
+        name: 'T',
+        boundDataSourceNodeId: 'PEDIDO',
+        pageSize: 'A4',
+        bands: {
+          details: {
+            height: 60,
+            elements: [
+              {
+                id: 'soma',
+                type: 'aggregate',
+                x: 0,
+                y: 0,
+                width: 300,
+                height: 16,
+                fn: 'sum',
+                dataSourceNodeId: 'ITEM',
+                fieldName: 'valor',
+                format: '#,##0.00',
+                prefix: 'Total: ',
+              },
+            ],
+          },
+        },
+      },
+      dados,
+    );
+
+    expect((await inspectPdf(bytes)).text).toContain('Total: 350,00');
+  });
+
+  it('combina consultas diferentes numa conta só', async () => {
+    const dados: ResolvedDataSet = {
+      nodeId: 'PEDIDO',
+      rows: [
+        {
+          data: { cliente: 'Acme' },
+          children: { ITEM: [{ data: { valor: 600 }, children: {} }] },
+        },
+        {
+          data: { cliente: 'Global' },
+          children: { ITEM: [{ data: { valor: 400 }, children: {} }] },
+        },
+      ],
+    };
+
+    const bytes = await renderReport(
+      {
+        id: 't',
+        name: 'T',
+        boundDataSourceNodeId: 'PEDIDO',
+        pageSize: 'A4',
+        bands: {
+          details: {
+            height: 60,
+            elements: [
+              {
+                id: 'ticket',
+                type: 'aggregate',
+                x: 0,
+                y: 0,
+                width: 300,
+                height: 16,
+                fn: 'sum',
+                expression: "{{SUM('ITEM','valor') / COUNT('PEDIDO')}}",
+                format: '#,##0.00',
+                prefix: 'Ticket medio: ',
+              },
+            ],
+          },
+        },
+      },
+      dados,
+    );
+
+    // 1000 de itens / 2 pedidos = 500
+    expect((await inspectPdf(bytes)).text).toContain('Ticket medio: 500,00');
+  });
+
+  it('elemento oculto não sai, mesmo sendo forma', async () => {
+    const bytes = await renderReport(
+      {
+        id: 't',
+        name: 'T',
+        boundDataSourceNodeId: 'N',
+        pageSize: 'A4',
+        bands: {
+          details: {
+            height: 60,
+            elements: [
+              {
+                id: 'v',
+                type: 'label',
+                x: 0,
+                y: 0,
+                width: 200,
+                height: 14,
+                content: 'Aparece',
+              },
+              {
+                id: 'h',
+                type: 'shape',
+                x: 0,
+                y: 20,
+                width: 40,
+                height: 40,
+                shape: 'star',
+                hidden: true,
+                style: { backgroundColor: '#000000' },
+              },
+            ],
+          },
+        },
+      },
+      dataSet([{}]),
+    );
+
+    expect((await inspectPdf(bytes)).text).toContain('Aparece');
+  });
+});

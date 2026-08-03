@@ -1,5 +1,12 @@
 import { LitElement, html, css, type PropertyValues, type TemplateResult } from 'lit';
-import type { DataSourceTree, ReportElement, Template } from '@treeport/schema';
+import type {
+  BarcodeElement,
+  DataSourceTree,
+  QrCodeElement,
+  ReportElement,
+  ShapeKind,
+  Template,
+} from '@treeport/schema';
 import { resolvePageSize } from '@treeport/schema';
 import {
   TemplateEditor,
@@ -22,6 +29,9 @@ import {
 } from './model/field-explorer.js';
 import { snapToGuides, type Guide } from './model/smart-guides.js';
 import { paginate, sampleRows, type PreviewPage } from './model/preview.js';
+import { snippetGroups } from './model/snippets.js';
+import { renderCode, peekCode, codeKey, isCodeError } from './model/code-preview.js';
+import { suggestFormats, guessFieldKind, KIND_LABEL } from './model/formats.js';
 
 /**
  * `<treeport-designer>` — o designer visual de relatórios.
@@ -56,6 +66,8 @@ export class TreeportDesigner extends LitElement {
     sidePanel: { state: true },
     guides: { state: true },
     explorerNodeId: { state: true },
+    editingId: { state: true },
+    codeVersion: { state: true },
   };
 
   declare template: Template;
@@ -75,6 +87,10 @@ export class TreeportDesigner extends LitElement {
   declare guides: Guide[];
   /** Nó escolhido no seletor de consulta do painel de dados. */
   declare explorerNodeId: string;
+  /** Elemento em edição inline de texto (duplo clique). */
+  declare editingId: string;
+  /** Sobe quando um código é gerado, para forçar o redesenho. */
+  declare codeVersion: number;
 
   private editor!: TemplateEditor;
   private selfAssigned = false;
@@ -107,6 +123,8 @@ export class TreeportDesigner extends LitElement {
     this.sidePanel = 'properties';
     this.guides = [];
     this.explorerNodeId = '';
+    this.editingId = '';
+    this.codeVersion = 0;
     this.editor = new TemplateEditor(this.template, {
       onChange: (t) => this.handleChange(t),
     });
@@ -387,9 +405,43 @@ export class TreeportDesigner extends LitElement {
     }
     if (this.drag?.pointerId !== event.pointerId) return;
 
+    const finished = this.drag;
     this.drag = undefined;
     this.guides = [];
+
+    // arrastar para dentro/fora de uma região reparenta o elemento (item 11)
+    if (finished?.handle === 'move' && finished.origins.size === 1) {
+      this.reparentAfterDrag(finished.band, [...finished.origins.keys()][0]!);
+    }
+
     this.editor.endBatch();
+  }
+
+  /** Move o elemento para dentro da região sob ele, ou o tira dela. */
+  private reparentAfterDrag(band: BandName, elementId: string): void {
+    const element = this.editor.element(elementId);
+    if (!element || element.type === 'region') return;
+
+    const at = this.editor.locate(elementId);
+    const parentId = at?.parentRegionId;
+
+    if (parentId) {
+      // já está numa região: saiu dos limites dela?
+      const region = this.editor.element(parentId);
+      if (!region) return;
+
+      const dentro =
+        element.x >= 0 &&
+        element.y >= 0 &&
+        element.x <= region.width &&
+        element.y <= region.height;
+
+      if (!dentro) this.editor.ungroupFromRegion(elementId);
+      return;
+    }
+
+    const region = this.regionAt(band, element.x, element.y);
+    if (region) this.editor.groupIntoRegion([elementId], region.id);
   }
 
   /** Arrasta a borda inferior de uma banda para mudar a altura dela. */
@@ -463,11 +515,63 @@ export class TreeportDesigner extends LitElement {
     if (type) this.addAndSelect(band, createElement(type, x, y));
   }
 
+  /**
+   * Insere um componente no centro da banda ativa (item 4 do feedback).
+   * O drag-and-drop continua valendo; isto é o atalho de um clique só.
+   */
+  private insertAtActiveBand(create: (x: number, y: number) => ReportElement): void {
+    const band = this.editor.band(this.activeBand);
+    if (!band) return;
+
+    const element = create(0, 0);
+    // centraliza na largura e põe num terço da altura da banda
+    const x = snapTo(Math.max(0, (this.contentWidth - element.width) / 2), this.gridSize);
+    const y = snapTo(Math.max(0, Math.min(band.height / 3, band.height - element.height)), this.gridSize);
+
+    this.addAndSelect(this.activeBand, { ...element, x, y } as ReportElement);
+  }
+
   private addAndSelect(band: BandName, element: ReportElement): void {
     const id = this.editor.addElement(band, element);
     this.activeBand = band;
+
+    // se caiu sobre uma região, entra nela (item 11)
+    const region = this.regionAt(band, element.x, element.y, id);
+    if (region) this.editor.groupIntoRegion([id], region.id);
+
     this.selectedIds = [id];
     this.emitSelection();
+  }
+
+  /**
+   * A região que contém aquele ponto, se houver.
+   *
+   * Usada ao soltar um elemento e ao terminar um arrasto: cair sobre uma
+   * região significa entrar nela, que é o que se espera de um agrupamento.
+   */
+  private regionAt(
+    band: BandName,
+    x: number,
+    y: number,
+    ignoreId?: string,
+  ): ReportElement | undefined {
+    const elements = this.editor.band(band)?.elements ?? [];
+
+    // do topo para baixo: a última desenhada é a que está por cima
+    for (let i = elements.length - 1; i >= 0; i -= 1) {
+      const element = elements[i]!;
+      if (element.type !== 'region' || element.id === ignoreId || element.locked) continue;
+
+      if (
+        x >= element.x &&
+        x <= element.x + element.width &&
+        y >= element.y &&
+        y <= element.y + element.height
+      ) {
+        return element;
+      }
+    }
+    return undefined;
   }
 
   // --- teclado --------------------------------------------------------------
@@ -528,11 +632,20 @@ export class TreeportDesigner extends LitElement {
     }
   }
 
+  /** Ctrl/Cmd + scroll dá zoom, como em qualquer editor gráfico. */
+  private onWheel(event: WheelEvent): void {
+    if (!event.ctrlKey && !event.metaKey) return;
+
+    event.preventDefault();
+    const step = event.deltaY > 0 ? -0.1 : 0.1;
+    this.zoom = Math.min(3, Math.max(0.25, Math.round((this.zoom + step) * 100) / 100));
+  }
+
   // --- render ---------------------------------------------------------------
 
   override render(): TemplateResult {
     return html`
-      <div class="app" @keydown=${this.onKeyDown} tabindex="0">
+      <div class="app" @keydown=${this.onKeyDown} @wheel=${this.onWheel} tabindex="0">
         ${this.renderTopBar()}
         <div class="body">
           ${this.mode === 'design' ? this.renderLeftPanel() : ''}
@@ -572,29 +685,54 @@ export class TreeportDesigner extends LitElement {
               <div class="toolgroup right">${this.zoomSelect()}</div>`
           : html`
               <div class="toolgroup">
-                <button title="Desfazer (Ctrl+Z)" @click=${() => this.undo()}>↶</button>
-                <button title="Refazer (Ctrl+Shift+Z)" @click=${() => this.redo()}>↷</button>
+                <button data-tip="Desfazer (Ctrl+Z)" @click=${() => this.undo()}>↶</button>
+                <button data-tip="Refazer (Ctrl+Shift+Z)" @click=${() => this.redo()}>↷</button>
               </div>
 
               <div class="toolgroup">
                 <select
-                  title="Tamanho da fonte"
+                  class="font-family"
+                  data-tip="Fonte"
                   ?disabled=${!active}
                   @change=${(e: Event) =>
-                    this.applyStyle({ fontSize: Number((e.target as HTMLSelectElement).value) })}
+                    this.applyStyle({ fontFamily: (e.target as HTMLSelectElement).value })}
                 >
-                  ${[6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 24, 32].map(
-                    (size) => html`<option
-                      value=${size}
-                      ?selected=${size === (style.fontSize ?? 10)}
+                  ${[
+                    ['helvetica', 'Helvetica'],
+                    ['times', 'Times'],
+                    ['courier', 'Courier'],
+                  ].map(
+                    ([value, label]) => html`<option
+                      value=${value}
+                      ?selected=${value === (style.fontFamily ?? 'helvetica')}
                     >
-                      ${size}
+                      ${label}
                     </option>`,
                   )}
                 </select>
+                <!-- input com datalist: escolhe da lista OU digita o número -->
+                <input
+                  class="font-size"
+                  type="number"
+                  min="4"
+                  max="200"
+                  list="tp-font-sizes"
+                  data-tip="Tamanho da fonte"
+                  .value=${String(style.fontSize ?? 10)}
+                  ?disabled=${!active}
+                  @change=${(e: Event) => {
+                    const size = Number((e.target as HTMLInputElement).value);
+                    if (size > 0) this.applyStyle({ fontSize: size });
+                  }}
+                />
+                <datalist id="tp-font-sizes">
+                  ${[6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 48].map(
+                    (size) => html`<option value=${size}></option>`,
+                  )}
+                </datalist>
                 <button
                   class="toggle ${style.bold ? 'on' : ''}"
-                  title="Negrito"
+                  data-tip="Negrito"
                   ?disabled=${!active}
                   @click=${() => this.applyStyle({ bold: !style.bold })}
                 >
@@ -602,13 +740,13 @@ export class TreeportDesigner extends LitElement {
                 </button>
                 <button
                   class="toggle ${style.italic ? 'on' : ''}"
-                  title="Itálico"
+                  data-tip="Itálico"
                   ?disabled=${!active}
                   @click=${() => this.applyStyle({ italic: !style.italic })}
                 >
                   <i>I</i>
                 </button>
-                <label class="color" title="Cor do texto">
+                <label class="color" data-tip="Cor do texto">
                   <input
                     type="color"
                     .value=${style.color ?? '#000000'}
@@ -618,7 +756,7 @@ export class TreeportDesigner extends LitElement {
                   />
                   <span>A</span>
                 </label>
-                <label class="color" title="Cor de fundo">
+                <label class="color" data-tip="Cor de fundo">
                   <input
                     type="color"
                     .value=${style.backgroundColor ?? '#ffffff'}
@@ -643,7 +781,7 @@ export class TreeportDesigner extends LitElement {
                   ([align, icon]) => html`
                     <button
                       class="toggle ${style.align === align ? 'on' : ''}"
-                      title="Alinhar texto"
+                      data-tip=${`Alinhar texto à ${align === 'left' ? 'esquerda' : align === 'center' ? 'ao centro' : 'direita'}`}
                       ?disabled=${!active}
                       @click=${() => this.applyStyle({ align })}
                     >
@@ -656,17 +794,17 @@ export class TreeportDesigner extends LitElement {
               <div class="toolgroup">
                 ${(
                   [
-                    ['left', '⇤', 'Alinhar à esquerda'],
-                    ['center', '⇹', 'Centralizar na horizontal'],
-                    ['right', '⇥', 'Alinhar à direita'],
-                    ['top', '⇧', 'Alinhar ao topo'],
-                    ['middle', '⇕', 'Centralizar na vertical'],
-                    ['bottom', '⇩', 'Alinhar à base'],
+                    ['left', '⇤', 'Alinhar bordas à esquerda'],
+                    ['center', '⇹', 'Centralizar entre si (horizontal)'],
+                    ['right', '⇥', 'Alinhar bordas à direita'],
+                    ['top', '⇧', 'Alinhar bordas ao topo'],
+                    ['middle', '⇕', 'Centralizar entre si (vertical)'],
+                    ['bottom', '⇩', 'Alinhar bordas à base'],
                   ] as [AlignMode, string, string][]
                 ).map(
                   ([mode, icon, title]) => html`
                     <button
-                      title=${title}
+                      data-tip=${title}
                       ?disabled=${selection.length < 2}
                       @click=${() => this.align(mode)}
                     >
@@ -675,7 +813,7 @@ export class TreeportDesigner extends LitElement {
                   `,
                 )}
                 <button
-                  title="Distribuir horizontalmente"
+                  data-tip="Distribuir espaçamento na horizontal"
                   ?disabled=${selection.length < 3}
                   @click=${() => this.distribute('horizontal')}
                 >
@@ -685,27 +823,27 @@ export class TreeportDesigner extends LitElement {
 
               <div class="toolgroup">
                 <button
-                  title="Agrupar numa região (Ctrl+G)"
+                  data-tip="Agrupar numa região (Ctrl+G)"
                   ?disabled=${selection.length < 2}
                   @click=${() => this.groupSelection()}
                 >
                   ⬚
                 </button>
                 <button
-                  title="Duplicar (Ctrl+D)"
+                  data-tip="Duplicar (Ctrl+D)"
                   ?disabled=${!active}
                   @click=${() => this.duplicateSelection()}
                 >
                   ⧉
                 </button>
-                <button title="Excluir (Delete)" ?disabled=${!active} @click=${() =>
+                <button data-tip="Excluir (Delete)" ?disabled=${!active} @click=${() =>
                   this.deleteSelection()}>
                   🗑
                 </button>
               </div>
 
               <div class="toolgroup right">
-                <label class="mini" title="Ímã de alinhamento com os vizinhos">
+                <label class="mini" data-tip="Ímã de alinhamento com os vizinhos">
                   <input
                     type="checkbox"
                     .checked=${this.smartGuides}
@@ -715,7 +853,7 @@ export class TreeportDesigner extends LitElement {
                   Guias
                 </label>
                 <select
-                  title="Grade"
+                  data-tip="Tamanho da grade"
                   @change=${(e: Event) =>
                     (this.gridSize = Number((e.target as HTMLSelectElement).value))}
                 >
@@ -735,7 +873,7 @@ export class TreeportDesigner extends LitElement {
   private zoomSelect(): TemplateResult {
     return html`
       <select
-        title="Zoom"
+        data-tip="Zoom (Ctrl + scroll)"
         @change=${(e: Event) => (this.zoom = Number((e.target as HTMLSelectElement).value))}
       >
         ${[0.5, 0.75, 1, 1.25, 1.5].map(
@@ -760,15 +898,17 @@ export class TreeportDesigner extends LitElement {
     return html`
       <aside class="panel left">
         <h3>Componentes</h3>
+        <p class="panel-hint">Clique para inserir ou arraste para a folha</p>
         <div class="palette-grid">
           ${PALETTE.map(
             (item) => html`
               <div
                 class="palette-item"
                 draggable="true"
-                title=${item.hint}
+                data-tip=${item.hint}
                 @dragstart=${(e: DragEvent) =>
                   this.onDragStart(e, item.type, 'text/treeport-element')}
+                @click=${() => this.insertAtActiveBand((x, y) => createElement(item.type, x, y))}
               >
                 <span class="icon">${item.icon}</span>
                 <span class="label">${item.label}</span>
@@ -777,23 +917,31 @@ export class TreeportDesigner extends LitElement {
           )}
         </div>
 
-        <h3>Prontos</h3>
-        <div class="snippets">
-          ${SNIPPETS.map(
-            (snippet) => html`
-              <div
-                class="snippet"
-                draggable="true"
-                title=${snippet.hint}
-                @dragstart=${(e: DragEvent) =>
-                  this.onDragStart(e, snippet.id, 'text/treeport-snippet')}
-              >
-                <span class="icon">${snippet.icon}</span>
-                <span class="label">${snippet.label}</span>
-              </div>
-            `,
-          )}
-        </div>
+        ${snippetGroups().map(
+          (group) => html`
+            <h3>${group.label}</h3>
+            <div class="snippets">
+              ${group.items.map(
+                (snippet) => html`
+                  <div
+                    class="snippet"
+                    draggable="true"
+                    data-tip=${snippet.hint}
+                    @dragstart=${(e: DragEvent) =>
+                      this.onDragStart(e, snippet.id, 'text/treeport-snippet')}
+                    @click=${() =>
+                      this.insertAtActiveBand((x, y) =>
+                        snippet.create(x, y, this.contentWidth),
+                      )}
+                  >
+                    <span class="icon">${snippet.icon}</span>
+                    <span class="label">${snippet.label}</span>
+                  </div>
+                `,
+              )}
+            </div>
+          `,
+        )}
       </aside>
     `;
   }
@@ -848,17 +996,33 @@ export class TreeportDesigner extends LitElement {
 
     return html`
       <nav class="subtabs">
-        ${tabs.map(
-          (tab) => html`
+        ${tabs.map((tab) => {
+          const active = samePath(tab.path, this.designPath);
+          const element =
+            tab.path.length > 0 ? this.editor.element(tab.path[tab.path.length - 1]!) : undefined;
+
+          // nome dado pelo usuário, senão o nó de dados, senão o id
+          const nome = element?.name || tab.dataSourceNodeId || tab.label;
+          const completo = element?.name
+            ? `${element.name}${tab.dataSourceNodeId ? ` · ${tab.dataSourceNodeId}` : ''}`
+            : nome;
+
+          return html`
             <button
-              class="subtab ${samePath(tab.path, this.designPath) ? 'active' : ''}"
-              title=${tab.dataSourceNodeId}
+              class="subtab ${active ? 'active' : ''}"
+              data-tip=${completo}
               @click=${() => this.openDesign(tab.path)}
+              @dblclick=${() => {
+                // duplo clique na aba renomeia (item 2)
+                if (!element) return;
+                const novo = prompt('Nome do subrelatório', element.name ?? '');
+                if (novo !== null) this.patch(element.id, { name: novo.trim() || undefined });
+              }}
             >
-              ${tab.depth > 0 ? '↳ ' : ''}${tab.label}
+              ${tab.depth > 0 ? '↳ ' : ''}${shortLabel(nome)}
             </button>
-          `,
-        )}
+          `;
+        })}
       </nav>
     `;
   }
@@ -883,14 +1047,16 @@ export class TreeportDesigner extends LitElement {
 
     return html`
       <section
-        class="band ${name === this.activeBand ? 'active' : ''}"
+        class="band ${name} ${name === this.activeBand ? 'active' : ''}"
         style="height:${height * z}px; ${this.gridStyle()}"
         @dragover=${this.onBandDragOver}
         @drop=${(e: DragEvent) => this.onBandDrop(e, name)}
         @pointerdown=${() => (this.activeBand = name)}
       >
         <span class="band-tag">
-          ${label}<em>${Math.round(height)}pt${name === 'details' ? ' · repete' : ''}</em>
+          <span class="dot ${name}"></span>${label}<em
+            >${Math.round(height)}pt${name === 'details' ? ' · repete por linha' : ''}</em
+          >
         </span>
 
         ${band.elements.map((element) => this.renderElement(element, name, 0, 0))}
@@ -952,21 +1118,152 @@ export class TreeportDesigner extends LitElement {
         style="left:${x * z}px; top:${y * z}px; width:${element.width * z}px;
                height:${Math.max(element.height, 2) * z}px; ${elementStyle(element)}"
         @pointerdown=${(e: PointerEvent) => this.onElementPointerDown(e, element, band, 'move')}
-        @dblclick=${() => {
+        @dblclick=${(e: MouseEvent) => {
+          e.stopPropagation();
           if (element.type === 'subreport') {
             this.openDesign([...this.designPath, element.id]);
+          } else if (element.type === 'label') {
+            // duplo clique num texto entra em edição direto no canvas
+            this.editingId = element.id;
           }
         }}
       >
-        ${element.type === 'region'
-          ? html`
-              <span class="region-tag">${element.name ?? 'Região'}</span>
-              ${element.elements.map((child) => this.renderElement(child, band, x, y))}
-            `
-          : html`<span class="element-label">${elementLabel(element)}</span>`}
+        ${this.renderElementBody(element, band, x, y)}
         ${selected && !element.locked ? this.renderHandles(element, band) : ''}
       </div>
     `;
+  }
+
+  /** Conteúdo interno do elemento, por tipo. */
+  private renderElementBody(
+    element: ReportElement,
+    band: BandName,
+    x: number,
+    y: number,
+  ): TemplateResult {
+    if (element.type === 'region') {
+      return html`
+        <span class="region-tag">${element.name ?? 'Região'}</span>
+        ${element.elements.map((child) => this.renderElement(child, band, x, y))}
+      `;
+    }
+
+    if (element.type === 'shape') {
+      return html`${this.renderShapeSvg(element.shape, element)}`;
+    }
+
+    if (element.type === 'barcode' || element.type === 'qrcode') {
+      return this.renderCodeImage(element);
+    }
+
+    // edição inline: um textarea por cima do elemento (item 6)
+    if (element.type === 'label' && this.editingId === element.id) {
+      return html`
+        <textarea
+          class="inline-edit"
+          .value=${element.content}
+          @pointerdown=${(e: Event) => e.stopPropagation()}
+          @blur=${(e: Event) => {
+            this.patch(element.id, { content: (e.target as HTMLTextAreaElement).value });
+            this.editingId = '';
+          }}
+          @keydown=${(e: KeyboardEvent) => {
+            e.stopPropagation();
+            if (e.key === 'Escape') this.editingId = '';
+            // Enter salva; Shift+Enter quebra linha
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              (e.target as HTMLTextAreaElement).blur();
+            }
+          }}
+          @focus=${(e: Event) => (e.target as HTMLTextAreaElement).select()}
+          autofocus
+        ></textarea>
+      `;
+    }
+
+    return html`<span class="element-label">${elementLabel(element)}</span>`;
+  }
+
+  /** Desenha a forma como SVG, espelhando o que o pdf-lib vai fazer. */
+  private renderShapeSvg(shape: ShapeKind, element: ReportElement): TemplateResult {
+    const style = element.style ?? {};
+    const fill = style.backgroundColor ?? 'transparent';
+    const stroke = style.borderColor ?? 'transparent';
+    const strokeWidth = style.borderWidth ?? 0;
+    const dash =
+      style.borderStyle === 'dashed' ? '6 4' : style.borderStyle === 'dotted' ? '2 3' : '';
+
+    const common = `fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"
+      ${dash ? `stroke-dasharray="${dash}"` : ''} vector-effect="non-scaling-stroke"`;
+
+    const body =
+      shape === 'ellipse'
+        ? `<ellipse cx="50" cy="50" rx="49" ry="49" ${common} />`
+        : shape === 'rectangle'
+          ? `<rect x="1" y="1" width="98" height="98" rx="${style.borderRadius ?? 0}" ${common} />`
+          : `<polygon points="${shapePoints(shape, (element as { points?: number }).points)}" ${common} />`;
+
+    return html`
+      <svg
+        class="shape-svg"
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        .innerHTML=${body}
+      ></svg>
+    `;
+  }
+
+  /**
+   * Imagem real do código de barras/QR (itens 15-17).
+   *
+   * A geração é assíncrona; enquanto não termina mostra um aviso, e quando
+   * fica pronta força um redesenho. O cache evita regerar a cada movimento.
+   */
+  private renderCodeImage(element: BarcodeElement | QrCodeElement): TemplateResult {
+    const value = this.resolveCodeValue(element);
+    const key = codeKey(element, value);
+    const cached = peekCode(key);
+
+    if (!cached) {
+      void renderCode(element, value).then(() => {
+        this.codeVersion += 1;
+      });
+      return html`<span class="code-status">gerando…</span>`;
+    }
+
+    if (isCodeError(cached)) {
+      return html`<span class="code-status error" title=${cached.message}>
+        ⚠ ${cached.message}
+      </span>`;
+    }
+
+    return html`<img class="code-img" src=${cached.dataUrl} alt="" draggable="false" />`;
+  }
+
+  /**
+   * Valor a codificar.
+   *
+   * No designer não há dados reais, então uma expressão vira um exemplo
+   * legível — senão o código sairia com as chaves literais e pareceria quebrado.
+   */
+  private resolveCodeValue(element: BarcodeElement | QrCodeElement): string {
+    const raw = element.valueExpression ?? '';
+    if (raw.trim() === '') return '';
+
+    if (!raw.includes('{{')) return raw;
+
+    const rows = sampleRows(
+      this.availableFields.filter((f) => f.depth === 0).map((f) => f.name),
+      1,
+    );
+    const row = rows[0] ?? {};
+
+    return raw.replace(/\{\{([\s\S]*?)\}\}/g, (_m, expr: string) => {
+      const name = expr.trim();
+      const value = row[name];
+      return value === undefined ? 'EXEMPLO' : String(value);
+    });
   }
 
   private renderHandles(element: ReportElement, band: BandName): TemplateResult {
@@ -1158,23 +1455,65 @@ export class TreeportDesigner extends LitElement {
           </p>
         `;
 
-      case 'field':
+      case 'field': {
+        const kind = el.fieldName ? guessFieldKind(el.fieldName) : undefined;
+        const sugestoes = el.fieldName ? suggestFormats(el.fieldName) : [];
+
         return html`
           <label class="row">
             <span>Campo</span>
             <select
-              .value=${el.fieldName}
               @change=${(e: Event) =>
                 this.patch(el.id, { fieldName: (e.target as HTMLSelectElement).value })}
             >
-              <option value="">(escolha)</option>
+              <option value="" ?selected=${!el.fieldName}>(escolha)</option>
               ${this.availableFields.map(
-                (f) => html`<option value=${f.name}>${f.name}</option>`,
+                (f) => html`<option value=${f.name} ?selected=${f.name === el.fieldName}>
+                  ${f.name}
+                </option>`,
               )}
             </select>
           </label>
-          ${this.textRow('Formato', el.format ?? '', (v) => this.patch(el.id, { format: v }))}
+
+          ${kind ? html`<p class="tip">Detectado como <strong>${KIND_LABEL[kind]}</strong>.</p>` : ''}
+
+          <label class="row">
+            <span>Formato</span>
+            <input
+              list="tp-formats-${el.id}"
+              placeholder=${sugestoes[0]?.mask ?? 'sem formato'}
+              .value=${el.format ?? ''}
+              @change=${(e: Event) =>
+                this.patch(el.id, { format: (e.target as HTMLInputElement).value })}
+            />
+          </label>
+          <datalist id="tp-formats-${el.id}">
+            ${sugestoes.map((f) => html`<option value=${f.mask}>${f.example}</option>`)}
+          </datalist>
+
+          ${sugestoes.length > 0
+            ? html`
+                <div class="chips">
+                  ${sugestoes.map(
+                    (f) => html`
+                      <button
+                        class="chip ${el.format === f.mask ? 'on' : ''}"
+                        data-tip=${f.mask}
+                        @click=${() => this.patch(el.id, { format: f.mask })}
+                      >
+                        ${f.example}
+                      </button>
+                    `,
+                  )}
+                </div>
+                <p class="tip">
+                  Ou digite a máscara. Texto ao redor vira literal:
+                  <code>R$ #,##0.00</code>
+                </p>
+              `
+            : ''}
         `;
+      }
 
       case 'barcode':
         return html`
@@ -1194,12 +1533,109 @@ export class TreeportDesigner extends LitElement {
         `;
 
       case 'qrcode':
-        return this.textRow('Valor', el.valueExpression, (v) =>
-          this.patch(el.id, { valueExpression: v }),
-        );
+        return html`
+          <label class="row">
+            <span>Conteúdo</span>
+            <select
+              @change=${(e: Event) =>
+                this.patch(el.id, { contentKind: (e.target as HTMLSelectElement).value })}
+            >
+              ${(
+                [
+                  ['text', 'Texto'],
+                  ['url', 'Site / URL'],
+                  ['email', 'E-mail'],
+                  ['phone', 'Telefone'],
+                  ['sms', 'SMS'],
+                  ['wifi', 'Wi-Fi'],
+                  ['vcard', 'Contato (vCard)'],
+                  ['geo', 'Localização'],
+                ] as const
+              ).map(
+                ([value, label]) => html`<option
+                  value=${value}
+                  ?selected=${value === (el.contentKind ?? 'text')}
+                >
+                  ${label}
+                </option>`,
+              )}
+            </select>
+          </label>
+
+          ${this.textRow('Valor', el.valueExpression, (v) =>
+            this.patch(el.id, { valueExpression: v }),
+          )}
+
+          <label class="row">
+            <span>Correção</span>
+            <select
+              @change=${(e: Event) =>
+                this.patch(el.id, {
+                  errorCorrection: (e.target as HTMLSelectElement).value,
+                })}
+            >
+              ${(
+                [
+                  ['L', 'Baixa (7%)'],
+                  ['M', 'Média (15%)'],
+                  ['Q', 'Alta (25%)'],
+                  ['H', 'Máxima (30%)'],
+                ] as const
+              ).map(
+                ([value, label]) => html`<option
+                  value=${value}
+                  ?selected=${value === (el.errorCorrection ?? 'M')}
+                >
+                  ${label}
+                </option>`,
+              )}
+            </select>
+          </label>
+
+          <div class="prop-grid">
+            ${this.colorField('Cor', el.foregroundColor ?? '#000000', (v) =>
+              this.patch(el.id, { foregroundColor: v }),
+            )}
+            ${this.colorField('Fundo', el.backgroundColor ?? '#ffffff', (v) =>
+              this.patch(el.id, { backgroundColor: v }),
+            )}
+          </div>
+          <p class="tip">Fundo claro e contraste alto: é o que o leitor precisa.</p>
+        `;
 
       case 'image':
-        return this.textRow('Origem', el.source, (v) => this.patch(el.id, { source: v }));
+        return html`
+          ${this.textRow('URL ou data URI', el.source, (v) => this.patch(el.id, { source: v }))}
+          <button class="wide" @click=${() => this.pickImageFile(el.id)}>
+            Escolher arquivo do computador…
+          </button>
+          <p class="tip">
+            O arquivo é embutido no template como data URI. URL só é baixada se o
+            backend permitir.
+          </p>
+          <label class="row">
+            <span>Encaixe</span>
+            <select
+              @change=${(e: Event) =>
+                this.patch(el.id, { fit: (e.target as HTMLSelectElement).value })}
+            >
+              ${(
+                [
+                  ['contain', 'Caber inteira'],
+                  ['cover', 'Preencher cortando'],
+                  ['fill', 'Esticar'],
+                ] as const
+              ).map(
+                ([value, label]) => html`<option
+                  value=${value}
+                  ?selected=${value === (el.fit ?? 'contain')}
+                >
+                  ${label}
+                </option>`,
+              )}
+            </select>
+          </label>
+        `;
 
       case 'subreport':
         return html`
@@ -1217,6 +1653,157 @@ export class TreeportDesigner extends LitElement {
           <button class="wide" @click=${() => this.openDesign([...this.designPath, el.id])}>
             Editar design deste subrelatório
           </button>
+        `;
+
+      case 'shape':
+        return html`
+          <label class="row">
+            <span>Forma</span>
+            <select
+              @change=${(e: Event) =>
+                this.patch(el.id, { shape: (e.target as HTMLSelectElement).value })}
+            >
+              ${(
+                [
+                  ['rectangle', 'Retângulo'],
+                  ['ellipse', 'Círculo / elipse'],
+                  ['triangle', 'Triângulo'],
+                  ['diamond', 'Losango'],
+                  ['star', 'Estrela'],
+                  ['pentagon', 'Pentágono'],
+                  ['hexagon', 'Hexágono'],
+                  ['arrow', 'Seta'],
+                ] as const
+              ).map(
+                ([value, label]) => html`<option value=${value} ?selected=${value === el.shape}>
+                  ${label}
+                </option>`,
+              )}
+            </select>
+          </label>
+
+          ${el.shape === 'star'
+            ? html`
+                <label class="row">
+                  <span>Pontas</span>
+                  <input
+                    type="number"
+                    min="3"
+                    max="20"
+                    .value=${String(el.points ?? 5)}
+                    @change=${(e: Event) =>
+                      this.patch(el.id, { points: Number((e.target as HTMLInputElement).value) })}
+                  />
+                </label>
+              `
+            : ''}
+          ${el.shape === 'rectangle'
+            ? html`
+                <label class="row">
+                  <span>Cantos</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="60"
+                    .value=${String(el.style?.borderRadius ?? 0)}
+                    @change=${(e: Event) =>
+                      this.applyStyleTo(el.id, {
+                        borderRadius: Number((e.target as HTMLInputElement).value),
+                      })}
+                  />
+                </label>
+              `
+            : ''}
+
+          <label class="row">
+            <span>Rotação</span>
+            <input
+              type="number"
+              min="-180"
+              max="180"
+              .value=${String(el.rotation ?? 0)}
+              @change=${(e: Event) =>
+                this.patch(el.id, { rotation: Number((e.target as HTMLInputElement).value) })}
+            />
+          </label>
+
+          ${this.borderProps(el)}
+        `;
+
+      case 'aggregate':
+        return html`
+          <label class="row">
+            <span>Operação</span>
+            <select
+              @change=${(e: Event) =>
+                this.patch(el.id, { fn: (e.target as HTMLSelectElement).value })}
+            >
+              ${(
+                [
+                  ['sum', 'Soma'],
+                  ['count', 'Contagem'],
+                  ['avg', 'Média'],
+                  ['min', 'Menor'],
+                  ['max', 'Maior'],
+                ] as const
+              ).map(
+                ([value, label]) => html`<option value=${value} ?selected=${value === el.fn}>
+                  ${label}
+                </option>`,
+              )}
+            </select>
+          </label>
+
+          <label class="row">
+            <span>Consulta</span>
+            <select
+              @change=${(e: Event) =>
+                this.patch(el.id, {
+                  dataSourceNodeId: (e.target as HTMLSelectElement).value,
+                })}
+            >
+              <option value="" ?selected=${!el.dataSourceNodeId}>(esta)</option>
+              ${this.allNodeOptions(el.dataSourceNodeId)}
+            </select>
+          </label>
+
+          ${el.fn === 'count'
+            ? ''
+            : html`
+                <label class="row">
+                  <span>Campo</span>
+                  <select
+                    @change=${(e: Event) =>
+                      this.patch(el.id, { fieldName: (e.target as HTMLSelectElement).value })}
+                  >
+                    <option value="" ?selected=${!el.fieldName}>(escolha)</option>
+                    ${this.fieldsOfNode(el.dataSourceNodeId).map(
+                      (name) => html`<option value=${name} ?selected=${name === el.fieldName}>
+                        ${name}
+                      </option>`,
+                    )}
+                  </select>
+                </label>
+              `}
+
+          ${this.textRow('Antes', el.prefix ?? '', (v) => this.patch(el.id, { prefix: v }))}
+          ${this.textRow('Depois', el.suffix ?? '', (v) => this.patch(el.id, { suffix: v }))}
+          ${this.textRow('Formato', el.format ?? '', (v) => this.patch(el.id, { format: v }))}
+
+          <details class="advanced">
+            <summary>Cálculo entre consultas</summary>
+            <p class="tip">
+              Combine consultas diferentes numa conta só. Ex.:
+              <code>{{SUM('ITEM','valor') / COUNT('PEDIDO')}}</code>
+            </p>
+            <textarea
+              rows="2"
+              placeholder="deixe vazio para usar a operação acima"
+              .value=${el.expression ?? ''}
+              @change=${(e: Event) =>
+                this.patch(el.id, { expression: (e.target as HTMLTextAreaElement).value })}
+            ></textarea>
+          </details>
         `;
 
       case 'region':
@@ -1344,16 +1931,18 @@ export class TreeportDesigner extends LitElement {
     const fields = this.availableFields;
 
     return html`
-      <label class="row">
-        <span>Consulta</span>
+      <label class="row stacked">
+        <span>Consulta de origem</span>
         <select
-          .value=${this.explorerNodeId || root.id}
           @change=${(e: Event) => (this.explorerNodeId = (e.target as HTMLSelectElement).value)}
         >
+          <option value="" ?selected=${this.explorerNodeId === ''}>
+            Selecione uma consulta…
+          </option>
           ${nodes.map(
             ({ node, depth }) => html`
-              <option value=${node.id}>
-                ${'— '.repeat(depth)}${node.name}${depth === 0 ? ' (master)' : ''}
+              <option value=${node.id} ?selected=${node.id === this.explorerNodeId}>
+                ${'— '.repeat(depth)}${node.name}${depth === 0 ? ' (principal)' : ''}
               </option>
             `,
           )}
@@ -1366,7 +1955,9 @@ export class TreeportDesigner extends LitElement {
       </p>
 
       <div class="fields">
-        ${fields.length === 0
+        ${this.explorerNodeId === ''
+          ? html`<p class="empty">Escolha uma consulta acima para ver os campos dela.</p>`
+          : fields.length === 0
           ? html`<p class="empty small">Esta consulta não declarou campos.</p>`
           : fields.map(
               (field) => html`
@@ -1463,7 +2054,11 @@ export class TreeportDesigner extends LitElement {
           ? html`${element.elements.map((child) =>
               this.renderPreviewElement(child, row, pageNumber, totalPages, x, y),
             )}`
-          : previewText(element, row, pageNumber, totalPages)}
+          : element.type === 'shape'
+            ? this.renderShapeSvg(element.shape, element)
+            : element.type === 'barcode' || element.type === 'qrcode'
+              ? this.renderCodeImage(element)
+              : previewText(element, row, pageNumber, totalPages)}
       </div>
     `;
   }
@@ -1495,6 +2090,132 @@ export class TreeportDesigner extends LitElement {
         />
       </label>
     `;
+  }
+
+  /** Campo de cor com o valor em hex ao lado. */
+  private colorField(
+    label: string,
+    value: string,
+    onChange: (value: string) => void,
+  ): TemplateResult {
+    return html`
+      <label class="num">
+        <span>${label}</span>
+        <input
+          type="color"
+          class="color-input"
+          .value=${value}
+          @input=${(e: Event) => onChange((e.target as HTMLInputElement).value)}
+        />
+      </label>
+    `;
+  }
+
+  /** Aplica um patch de estilo a um elemento específico. */
+  private applyStyleTo(elementId: string, patch: Record<string, unknown>): void {
+    this.editor.updateStyle(elementId, patch);
+    this.requestUpdate();
+  }
+
+  /** Controles de borda, compartilhados por forma e região (item 14). */
+  private borderProps(el: ReportElement): TemplateResult {
+    const style = el.style ?? {};
+
+    return html`
+      <div class="prop-title spaced">Borda e preenchimento</div>
+      <div class="prop-grid">
+        ${this.colorField('Preenchimento', style.backgroundColor ?? '#ffffff', (v) =>
+          this.applyStyleTo(el.id, { backgroundColor: v }),
+        )}
+        ${this.colorField('Cor da borda', style.borderColor ?? '#334155', (v) =>
+          this.applyStyleTo(el.id, { borderColor: v }),
+        )}
+      </div>
+
+      <label class="row">
+        <span>Espessura</span>
+        <input
+          type="number"
+          min="0"
+          max="20"
+          step="0.5"
+          .value=${String(style.borderWidth ?? 1)}
+          @change=${(e: Event) =>
+            this.applyStyleTo(el.id, {
+              borderWidth: Number((e.target as HTMLInputElement).value),
+            })}
+        />
+      </label>
+
+      <label class="row">
+        <span>Traço</span>
+        <select
+          @change=${(e: Event) =>
+            this.applyStyleTo(el.id, { borderStyle: (e.target as HTMLSelectElement).value })}
+        >
+          ${(
+            [
+              ['solid', 'Contínuo'],
+              ['dashed', 'Tracejado'],
+              ['dotted', 'Pontilhado'],
+            ] as const
+          ).map(
+            ([value, label]) => html`<option
+              value=${value}
+              ?selected=${value === (style.borderStyle ?? 'solid')}
+            >
+              ${label}
+            </option>`,
+          )}
+        </select>
+      </label>
+
+      <button
+        class="wide"
+        @click=${() => this.applyStyleTo(el.id, { backgroundColor: undefined })}
+      >
+        Sem preenchimento
+      </button>
+    `;
+  }
+
+  /** Todas as consultas da árvore, para o seletor do totalizador. */
+  private allNodeOptions(selected?: string): TemplateResult[] {
+    if (!this.dataSource) return [];
+
+    return flattenExplorer(describeTree(this.dataSource)).map(
+      ({ node, depth }) => html`<option value=${node.id} ?selected=${node.id === selected}>
+        ${'— '.repeat(depth)}${node.name}
+      </option>`,
+    );
+  }
+
+  /** Campos de um nó específico (ou do atual, quando não informado). */
+  private fieldsOfNode(nodeId?: string): string[] {
+    if (!this.dataSource) return [];
+
+    const target = nodeId || this.currentNodeId();
+    if (!target) return [];
+
+    return findNode(describeTree(this.dataSource), target)?.fields ?? [];
+  }
+
+  /** Escolhe um arquivo de imagem e embute como data URI (item 18). */
+  private pickImageFile(elementId: string): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/png,image/jpeg';
+
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = () => this.patch(elementId, { source: String(reader.result) });
+      reader.readAsDataURL(file);
+    };
+
+    input.click();
   }
 
   private textRow(
@@ -1590,6 +2311,52 @@ export class TreeportDesigner extends LitElement {
       border-left: none;
     }
 
+    /* tooltip proprio: o title nativo demora ~1s e some rapido demais */
+    [data-tip] {
+      position: relative;
+    }
+
+    [data-tip]:hover::after {
+      content: attr(data-tip);
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1e293b;
+      color: #f8fafc;
+      font-size: 11px;
+      font-weight: 400;
+      padding: 4px 8px;
+      border-radius: 4px;
+      white-space: nowrap;
+      pointer-events: none;
+      z-index: 100;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.25);
+    }
+
+    [data-tip]:hover::before {
+      content: '';
+      position: absolute;
+      top: calc(100% + 2px);
+      left: 50%;
+      transform: translateX(-50%);
+      border: 4px solid transparent;
+      border-bottom-color: #1e293b;
+      pointer-events: none;
+      z-index: 100;
+    }
+
+    .topbar .font-size {
+      width: 52px;
+      height: 26px;
+      flex: none;
+      text-align: center;
+    }
+
+    .topbar .font-family {
+      width: 92px;
+    }
+
     .topbar button {
       font: inherit;
       font-size: 12px;
@@ -1606,6 +2373,11 @@ export class TreeportDesigner extends LitElement {
     .topbar button:hover:not(:disabled) {
       background: var(--tp-bg);
       border-color: var(--tp-border);
+      color: var(--tp-accent);
+    }
+
+    .topbar button:active:not(:disabled) {
+      transform: translateY(1px);
     }
 
     .topbar button:disabled {
@@ -1705,6 +2477,14 @@ export class TreeportDesigner extends LitElement {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 4px;
+    }
+
+    .panel-hint {
+      margin: 0 0 6px;
+      font-size: 9px;
+      color: var(--tp-muted);
+      opacity: 0.85;
+      line-height: 1.3;
     }
 
     .palette-item,
@@ -1851,14 +2631,93 @@ export class TreeportDesigner extends LitElement {
       position: absolute;
     }
 
+    /* cada banda tem sua cor, para achar a divisão de longe (item 8) */
     .band {
       position: relative;
       box-sizing: border-box;
-      border-bottom: 1px solid #e4e8ee;
+      border-bottom: 2px solid transparent;
+    }
+
+    .band.header {
+      border-bottom-color: #bfdbfe;
+      box-shadow: inset 3px 0 0 #3b82f6;
+    }
+
+    .band.details {
+      border-bottom-color: #bbf7d0;
+      box-shadow: inset 3px 0 0 #22c55e;
+    }
+
+    .band.footer {
+      border-bottom-color: #fed7aa;
+      box-shadow: inset 3px 0 0 #f97316;
     }
 
     .band.active {
-      box-shadow: inset 2px 0 0 var(--tp-accent);
+      background-color: rgba(37, 99, 235, 0.025);
+    }
+
+    .band.header.active { box-shadow: inset 4px 0 0 #2563eb; }
+    .band.details.active { box-shadow: inset 4px 0 0 #16a34a; }
+    .band.footer.active { box-shadow: inset 4px 0 0 #ea580c; }
+
+    .band-tag .dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+
+    .band-tag .dot.header { background: #3b82f6; }
+    .band-tag .dot.details { background: #22c55e; }
+    .band-tag .dot.footer { background: #f97316; }
+
+    .shape-svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+      pointer-events: none;
+    }
+
+    .code-img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      pointer-events: none;
+      background: #fff;
+    }
+
+    .code-status {
+      font-size: 9px;
+      color: var(--tp-muted);
+      padding: 0 4px;
+      pointer-events: none;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .code-status.error {
+      color: #b91c1c;
+    }
+
+    .inline-edit {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+      padding: 0 2px;
+      margin: 0;
+      resize: none;
+      background: #fff;
+      outline: 2px solid var(--tp-accent);
+      font: inherit;
+      font-family: inherit;
+      color: inherit;
+      z-index: 8;
     }
 
     .band-tag {
@@ -1948,6 +2807,13 @@ export class TreeportDesigner extends LitElement {
       color: #fff;
       border-radius: 0 0 3px 0;
       pointer-events: none;
+    }
+
+    .type-aggregate {
+      background: rgba(37, 99, 235, 0.06);
+      border-color: #bfdbfe;
+      font-size: 10px;
+      color: #1d4ed8;
     }
 
     .type-barcode,
@@ -2142,6 +3008,55 @@ export class TreeportDesigner extends LitElement {
       color: var(--tp-accent);
     }
 
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 3px;
+      margin-bottom: 6px;
+    }
+
+    .chip {
+      font: inherit;
+      font-size: 10px;
+      padding: 3px 7px;
+      border: 1px solid var(--tp-border);
+      border-radius: 10px;
+      background: var(--tp-bg);
+      color: var(--tp-muted);
+      cursor: pointer;
+    }
+
+    .chip:hover {
+      border-color: var(--tp-accent);
+      color: var(--tp-accent);
+    }
+
+    .chip.on {
+      background: var(--tp-accent-soft);
+      border-color: var(--tp-accent);
+      color: var(--tp-accent);
+      font-weight: 600;
+    }
+
+    .color-input {
+      height: 24px;
+      padding: 1px 2px;
+      cursor: pointer;
+    }
+
+    .advanced {
+      margin-top: 8px;
+      border-top: 1px solid var(--tp-border);
+      padding-top: 6px;
+    }
+
+    .advanced summary {
+      font-size: 10px;
+      color: var(--tp-muted);
+      cursor: pointer;
+      user-select: none;
+    }
+
     .tip {
       font-size: 10px;
       color: var(--tp-muted);
@@ -2330,6 +3245,16 @@ function elementLabel(element: ReportElement): string {
       return `⊞ ${element.dataSourceNodeId || '(sem consulta)'}`;
     case 'region':
       return element.name ?? 'Região';
+    case 'shape':
+      return '';
+    case 'aggregate': {
+      // mostra a fórmula, para dar para conferir sem abrir as propriedades
+      const alvo = element.dataSourceNodeId ? `${element.dataSourceNodeId}.` : '';
+      const corpo = element.expression
+        ? element.expression
+        : `${element.fn.toUpperCase()}(${alvo}${element.fieldName ?? '*'})`;
+      return `${element.prefix ?? ''}${corpo}${element.suffix ?? ''}`;
+    }
     case 'table':
       return 'Tabela';
     default:
@@ -2353,6 +3278,10 @@ function previewText(
   if (element.type === 'field') {
     const value = row[element.fieldName];
     return value === undefined || value === null ? '' : String(value);
+  }
+  if (element.type === 'aggregate') {
+    // sem dados reais no preview, mostra a fórmula em vez de um número falso
+    return `${element.prefix ?? ''}⟨${element.fn}⟩${element.suffix ?? ''}`;
   }
   if (element.type !== 'label') return elementLabel(element);
 
@@ -2412,6 +3341,49 @@ function capturePointer(event: PointerEvent): void {
   } catch {
     // sem captura: o arrasto ainda funciona enquanto o cursor estiver sobre a folha
   }
+}
+
+/**
+ * Pontos do polígono normalizados em 0..100, para o SVG do canvas.
+ * Espelha o `shapePath` do core — se divergirem, o designer mostra uma forma
+ * e o PDF sai com outra.
+ */
+function shapePoints(shape: ShapeKind, points = 5): string {
+  const polygon = (sides: number, innerRatio?: number): string => {
+    const total = innerRatio === undefined ? sides : sides * 2;
+    const out: string[] = [];
+
+    for (let i = 0; i < total; i += 1) {
+      const angle = (i / total) * Math.PI * 2 - Math.PI / 2;
+      const scale = innerRatio === undefined || i % 2 === 0 ? 1 : innerRatio;
+      out.push(
+        `${(50 + Math.cos(angle) * 49 * scale).toFixed(1)},${(50 + Math.sin(angle) * 49 * scale).toFixed(1)}`,
+      );
+    }
+    return out.join(' ');
+  };
+
+  switch (shape) {
+    case 'triangle':
+      return '50,1 99,99 1,99';
+    case 'diamond':
+      return '50,1 99,50 50,99 1,50';
+    case 'arrow':
+      return '1,35 60,35 60,5 99,50 60,95 60,65 1,65';
+    case 'star':
+      return polygon(Math.max(3, points), 0.382);
+    case 'pentagon':
+      return polygon(5);
+    case 'hexagon':
+      return polygon(6);
+    default:
+      return '1,1 99,1 99,99 1,99';
+  }
+}
+
+/** Encurta um rótulo longo, mantendo o começo, que é o que identifica. */
+function shortLabel(text: string, max = 18): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
 
 function snapTo(value: number, grid: number): number {
