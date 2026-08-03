@@ -5,6 +5,7 @@ import type {
   ReportElement,
   Template,
 } from '@treeport/schema';
+import { resolveDesign, nearestValidPath, type DesignPath } from './subreport-tabs.js';
 
 /**
  * Edição do template, sem tocar em DOM.
@@ -57,6 +58,11 @@ export class TemplateEditor {
   private readonly future: Template[] = [];
   private readonly historyLimit: number;
   private readonly onChange: ((template: Template) => void) | undefined;
+  /**
+   * Design sendo editado: vazio é o template principal, senão o caminho de
+   * subreports até o design aberto (sub-fase 9.5).
+   */
+  private path: DesignPath = [];
   /** Profundidade de agrupamento de histórico (arrasto em curso). */
   private batchDepth = 0;
   /** O passo do lote já foi registrado no histórico? */
@@ -149,26 +155,55 @@ export class TemplateEditor {
     return true;
   }
 
+  // --- design ativo (abas de subreport) -------------------------------------
+
+  /** Caminho do design sendo editado. Vazio = template principal. */
+  get designPath(): DesignPath {
+    return [...this.path];
+  }
+
+  /**
+   * Abre outro design para edição (uma aba de subreport).
+   * Trocar de aba não entra no histórico: é navegação, não edição.
+   */
+  openDesign(path: DesignPath): void {
+    // valida antes de trocar, para não deixar o editor num caminho quebrado
+    resolveDesign(this.current, path);
+    this.path = [...path];
+  }
+
+  /** As bandas do design ativo. */
+  private designBands(template: Template = this.current): BandSet {
+    return resolveDesign(template, this.path);
+  }
+
   /** Substitui o template inteiro (abrir arquivo, carregar do servidor). */
   replace(template: Template): void {
     this.commit((draft) => {
+      // limpa as chaves antigas: `Object.assign` sozinho deixaria resíduo de
+      // um template anterior que tivesse campos que o novo não tem
+      const bag = draft as unknown as Record<string, unknown>;
+      for (const key of Object.keys(bag)) delete bag[key];
       Object.assign(draft, clone(template));
     });
+    // o design aberto pode ter deixado de existir no template novo
+    this.path = nearestValidPath(this.current, this.path);
   }
 
   // --- consulta -------------------------------------------------------------
 
   /** A banda pedida, ou undefined se o template não a tem. */
   band(name: BandName): Band | undefined {
-    return this.current.bands[name];
+    return this.designBands()[name];
   }
 
   /** Todas as bandas existentes, na ordem de desenho. */
   bands(): { name: BandName; band: Band }[] {
     const order: BandName[] = ['header', 'details', 'footer'];
     const out: { name: BandName; band: Band }[] = [];
+    const bands = this.designBands();
     for (const name of order) {
-      const band = this.current.bands[name];
+      const band = bands[name];
       if (band) out.push({ name, band });
     }
     return out;
@@ -187,7 +222,7 @@ export class TemplateEditor {
   element(elementId: string): ReportElement | undefined {
     const at = this.locate(elementId);
     if (!at) return undefined;
-    return this.current.bands[at.band]!.elements[at.index];
+    return this.designBands()[at.band]!.elements[at.index];
   }
 
   // --- mutações -------------------------------------------------------------
@@ -201,8 +236,9 @@ export class TemplateEditor {
     const id = this.uniqueId(element.id);
 
     this.commit((draft) => {
-      ensureBand(draft.bands, band);
-      draft.bands[band]!.elements.push({ ...element, id } as ReportElement);
+      const bands = this.designBands(draft);
+      ensureBand(bands, band);
+      bands[band]!.elements.push({ ...element, id } as ReportElement);
     });
 
     return id;
@@ -213,8 +249,10 @@ export class TemplateEditor {
     if (!at) return false;
 
     this.commit((draft) => {
-      draft.bands[at.band]!.elements.splice(at.index, 1);
+      this.designBands(draft)[at.band]!.elements.splice(at.index, 1);
     });
+    // apagar um subreport fecha a aba dele, se estava aberta
+    this.path = nearestValidPath(this.current, this.path);
     return true;
   }
 
@@ -224,7 +262,7 @@ export class TemplateEditor {
     if (!at) return false;
 
     this.commit((draft) => {
-      const target = draft.bands[at.band]!.elements[at.index]!;
+      const target = this.designBands(draft)[at.band]!.elements[at.index]!;
       // `type` e `id` não mudam por patch: trocar o tipo exige recriar o
       // elemento, senão sobrariam campos do tipo antigo
       const { type: _type, id: _id, ...rest } = patch as Record<string, unknown>;
@@ -259,18 +297,20 @@ export class TemplateEditor {
   /** Muda a altura de uma banda. */
   setBandHeight(band: BandName, height: number): void {
     this.commit((draft) => {
-      ensureBand(draft.bands, band);
-      draft.bands[band]!.height = Math.max(MIN_SIZE, height);
+      const bands = this.designBands(draft);
+      ensureBand(bands, band);
+      bands[band]!.height = Math.max(MIN_SIZE, height);
     });
   }
 
   /** Cria ou remove uma banda opcional (header/footer). */
   toggleBand(band: 'header' | 'footer', enabled: boolean): void {
     this.commit((draft) => {
+      const bands = this.designBands(draft);
       if (enabled) {
-        draft.bands[band] ??= { height: band === 'header' ? 60 : 30, elements: [] };
+        bands[band] ??= { height: band === 'header' ? 60 : 30, elements: [] };
       } else {
-        delete draft.bands[band];
+        delete bands[band];
       }
     });
   }
@@ -312,7 +352,7 @@ export class TemplateEditor {
     if (!at) return false;
 
     this.commit((draft) => {
-      apply(draft.bands[at.band]!.elements, at.index);
+      apply(this.designBands(draft)[at.band]!.elements, at.index);
     });
     return true;
   }
@@ -341,7 +381,7 @@ export class TemplateEditor {
     this.commit((draft) => {
       for (const { id } of targets) {
         const at = this.locate(id)!;
-        const target = draft.bands[at.band]!.elements[at.index]!;
+        const target = this.designBands(draft)[at.band]!.elements[at.index]!;
 
         switch (mode) {
           case 'left':
@@ -389,7 +429,7 @@ export class TemplateEditor {
       sorted.forEach((element, i) => {
         if (i === 0 || i === sorted.length - 1) return;
         const at = this.locate(element.id)!;
-        draft.bands[at.band]!.elements[at.index]![key] = first[key] + step * i;
+        this.designBands(draft)[at.band]!.elements[at.index]![key] = first[key] + step * i;
       });
     });
 

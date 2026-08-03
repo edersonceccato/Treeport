@@ -1,5 +1,5 @@
 import { LitElement, html, css, type PropertyValues, type TemplateResult } from 'lit';
-import type { ReportElement, Template } from '@treeport/schema';
+import type { DataSourceTree, ReportElement, Template } from '@treeport/schema';
 import { resolvePageSize } from '@treeport/schema';
 import {
   TemplateEditor,
@@ -9,6 +9,13 @@ import {
 import { PALETTE, createElement, type PaletteItemType } from './model/palette.js';
 import { dragBox, resizeBox, handleCursor, type Box, type Handle } from './model/interaction.js';
 import { ptToMm, type RulerUnit } from './model/units.js';
+import { listDesignTabs, samePath, pathKey, type DesignPath } from './model/subreport-tabs.js';
+import {
+  describeTree,
+  fieldsInScope,
+  fieldExpression,
+  type ExplorerField,
+} from './model/field-explorer.js';
 
 /**
  * `<treeport-designer>` — o designer visual.
@@ -28,8 +35,10 @@ export class TreeportDesigner extends LitElement {
     showGrid: { type: Boolean, attribute: 'show-grid' },
     unit: { type: String },
     zoom: { type: Number },
+    dataSource: { type: Object },
     selectedIds: { state: true },
     activeBand: { state: true },
+    designPath: { state: true },
   };
 
   /** O template sendo editado. Ler devolve o estado atual. */
@@ -40,8 +49,13 @@ export class TreeportDesigner extends LitElement {
   declare unit: RulerUnit;
   declare zoom: number;
 
+  /** Árvore de dados, para o explorador de campos (sub-fase 9.4). */
+  declare dataSource: DataSourceTree | undefined;
+
   declare selectedIds: string[];
   declare activeBand: BandName;
+  /** Design aberto: vazio é o principal, senão o caminho do subreport. */
+  declare designPath: DesignPath;
 
   private editor!: TemplateEditor;
   /** A última atribuição a `template` veio de dentro do componente? */
@@ -67,6 +81,7 @@ export class TreeportDesigner extends LitElement {
     this.zoom = 1;
     this.selectedIds = [];
     this.activeBand = 'details';
+    this.designPath = [];
     this.editor = new TemplateEditor(this.template, {
       onChange: (t) => this.handleChange(t),
     });
@@ -136,6 +151,31 @@ export class TreeportDesigner extends LitElement {
   select(ids: string[]): void {
     this.selectedIds = [...ids];
     this.emitSelection();
+  }
+
+  /** Abre o design de um subreport (ou o principal, com caminho vazio). */
+  openDesign(path: DesignPath): void {
+    this.editor.openDesign(path);
+    this.designPath = [...path];
+    this.selectedIds = [];
+    this.emitSelection();
+    this.requestUpdate();
+  }
+
+  /** Campos visíveis de dentro do design aberto, para arrastar/autocompletar. */
+  get availableFields(): ExplorerField[] {
+    if (!this.dataSource) return [];
+
+    const nodeId = this.currentNodeId();
+    return nodeId ? fieldsInScope(describeTree(this.dataSource), nodeId) : [];
+  }
+
+  /** Nó da árvore de dados que alimenta o design aberto. */
+  private currentNodeId(): string | undefined {
+    const tab = listDesignTabs(this.editor.peek()).find((t) =>
+      samePath(t.path, this.designPath),
+    );
+    return tab?.dataSourceNodeId || this.template.boundDataSourceNodeId;
   }
 
   /** Remove os elementos selecionados. */
@@ -264,14 +304,31 @@ export class TreeportDesigner extends LitElement {
   private onBandDrop(event: DragEvent, band: BandName): void {
     event.preventDefault();
 
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const x = snapTo((event.clientX - rect.left) / this.zoom, this.gridSize);
+    const y = snapTo((event.clientY - rect.top) / this.zoom, this.gridSize);
+
+    // campo vindo do explorador: cria um Field já vinculado
+    const fieldJson = event.dataTransfer?.getData('text/treeport-field');
+    if (fieldJson) {
+      const field = JSON.parse(fieldJson) as ExplorerField;
+      const element =
+        field.depth === 0
+          ? createElement('field', x, y, { fieldName: field.name } as never)
+          // campo de um ancestral precisa de expressão com parent.
+          : createElement('label', x, y, { content: fieldExpression(field) } as never);
+
+      const id = this.editor.addElement(band, element);
+      this.activeBand = band;
+      this.selectedIds = [id];
+      this.emitSelection();
+      return;
+    }
+
     const type = event.dataTransfer?.getData('text/treeport-element') as PaletteItemType;
     if (!type) return;
 
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    const x = (event.clientX - rect.left) / this.zoom;
-    const y = (event.clientY - rect.top) / this.zoom;
-
-    const element = createElement(type, snapTo(x, this.gridSize), snapTo(y, this.gridSize));
+    const element = createElement(type, x, y);
     const id = this.editor.addElement(band, element);
 
     this.activeBand = band;
@@ -322,6 +379,7 @@ export class TreeportDesigner extends LitElement {
       <div class="designer" @keydown=${this.onKeyDown} tabindex="0">
         ${this.renderPalette()}
         <div class="workspace">
+          ${this.renderTabs()}
           ${this.renderRuler()}
           <div
             class="canvas"
@@ -334,8 +392,73 @@ export class TreeportDesigner extends LitElement {
             ${this.editor.bands().map(({ name, band }) => this.renderBand(name, band.height))}
           </div>
         </div>
+        ${this.renderFieldExplorer()}
       </div>
     `;
+  }
+
+  /** Abas de design: principal e um por subreport (sub-fase 9.5). */
+  private renderTabs(): TemplateResult | string {
+    const tabs = listDesignTabs(this.editor.peek());
+    if (tabs.length <= 1) return '';
+
+    return html`
+      <nav class="tabs">
+        ${tabs.map(
+          (tab) => html`
+            <button
+              class="tab ${samePath(tab.path, this.designPath) ? 'active' : ''}"
+              style="padding-left:${8 + tab.depth * 10}px"
+              title=${tab.dataSourceNodeId}
+              @click=${() => this.openDesign(tab.path)}
+            >
+              ${tab.depth > 0 ? '↳ ' : ''}${tab.label}
+            </button>
+          `,
+        )}
+      </nav>
+    `;
+  }
+
+  /** Explorador de campos (sub-fase 9.4). */
+  private renderFieldExplorer(): TemplateResult | string {
+    if (!this.dataSource) return '';
+
+    const fields = this.availableFields;
+    if (fields.length === 0) return '';
+
+    return html`
+      <aside class="explorer">
+        <h3>Campos</h3>
+        <p class="explorer-hint">Arraste para o canvas</p>
+        ${fields.map(
+          (field) => html`
+            <div
+              class="field-item"
+              draggable="true"
+              title=${field.depth === 0
+                ? field.nodeId
+                : `${field.nodeId} — ${field.depth} nível(is) acima`}
+              @dragstart=${(e: DragEvent) => this.onFieldDragStart(e, field)}
+            >
+              <span class="field-name">${field.name}</span>
+              ${field.depth > 0
+                ? html`<span class="field-depth">${'↑'.repeat(field.depth)}</span>`
+                : ''}
+            </div>
+          `,
+        )}
+      </aside>
+    `;
+  }
+
+  /**
+   * Arrastar um campo cria um elemento já vinculado — o usuário não digita o
+   * nome, que é onde mora metade dos erros num relatório.
+   */
+  private onFieldDragStart(event: DragEvent, field: ExplorerField): void {
+    event.dataTransfer?.setData('text/treeport-field', JSON.stringify(field));
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy';
   }
 
   private renderPalette(): TemplateResult {
@@ -411,6 +534,10 @@ export class TreeportDesigner extends LitElement {
                ${elementStyle(element)}"
         @pointerdown=${(e: PointerEvent) =>
           this.onElementPointerDown(e, element.id, band, 'move')}
+        @dblclick=${() => {
+          // duplo clique num subreport entra no design dele
+          if (element.type === 'subreport') this.openDesign([...this.designPath, element.id]);
+        }}
       >
         <span class="element-label">${elementLabel(element)}</span>
         ${selected ? this.renderHandles(element, band) : ''}
@@ -503,6 +630,93 @@ export class TreeportDesigner extends LitElement {
       text-align: center;
       color: var(--tp-muted);
       font-weight: 600;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 2px;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
+    }
+
+    .tab {
+      font: inherit;
+      font-size: 11px;
+      padding: 4px 10px;
+      border: 1px solid var(--tp-border);
+      border-bottom: none;
+      border-radius: 4px 4px 0 0;
+      background: var(--tp-panel);
+      color: var(--tp-muted);
+      cursor: pointer;
+    }
+
+    .tab:hover {
+      color: var(--tp-text);
+    }
+
+    .tab.active {
+      background: var(--tp-bg);
+      color: var(--tp-text);
+      border-color: var(--tp-accent);
+      font-weight: 600;
+    }
+
+    .explorer {
+      width: 150px;
+      flex: 0 0 auto;
+      background: var(--tp-panel);
+      border: 1px solid var(--tp-border);
+      border-radius: 6px;
+      padding: 8px;
+      max-height: 420px;
+      overflow: auto;
+    }
+
+    .explorer h3 {
+      margin: 0 0 2px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--tp-muted);
+    }
+
+    .explorer-hint {
+      margin: 0 0 8px;
+      font-size: 10px;
+      color: var(--tp-muted);
+      opacity: 0.8;
+    }
+
+    .field-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      padding: 4px 6px;
+      margin-bottom: 3px;
+      background: var(--tp-bg);
+      border: 1px solid var(--tp-border);
+      border-radius: 3px;
+      cursor: grab;
+      user-select: none;
+      font-size: 11px;
+    }
+
+    .field-item:hover {
+      border-color: var(--tp-accent);
+    }
+
+    .field-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .field-depth {
+      color: var(--tp-muted);
+      font-size: 9px;
+      flex: 0 0 auto;
     }
 
     .workspace {

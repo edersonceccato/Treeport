@@ -4,9 +4,7 @@ O `@treeport/designer` é um **Web Component** — um Custom Element nativo, nã
 um componente de framework. Uma implementação só funciona em React, Vue,
 Angular, Next.js ou numa página HTML pura, sem adapters.
 
-> **Status:** sub-fases 9.1–9.3 do brief (canvas, paleta, propriedades).
-> Faltam: explorador de campos (9.4), abas de subreport (9.5), editor de
-> expressão (9.6) e integração com o backend (9.7).
+> **Status:** Fase 9 completa (sub-fases 9.1 a 9.7).
 
 ## Instalação
 
@@ -71,6 +69,7 @@ O mesmo padrão vale para Vue (`:template.prop`) e Angular (`[template]`).
 | Propriedade | Tipo | Default | O que faz |
 |---|---|---|---|
 | `template` | `Template` | vazio | O template sendo editado |
+| `dataSource` | `DataSourceTree` | — | Alimenta o explorador de campos |
 | `gridSize` | `number` | `5` | Grade em pontos; `0` desliga o snap |
 | `showGrid` | `boolean` | `true` | Mostra a grade |
 | `unit` | `'mm' \| 'in'` | `'mm'` | Unidade da régua |
@@ -155,6 +154,129 @@ mmToPt(10);   // 28.35
 O `x`/`y` de um elemento é relativo ao **topo da banda**, e o canvas tem a
 largura da área útil (página menos as margens laterais) — exatamente como o
 motor de renderização calcula. O que você vê no designer é o que sai no PDF.
+
+## Explorador de campos
+
+Informe a árvore de dados e o painel de campos aparece sozinho:
+
+```ts
+designer.dataSource = await api.getDataSource('pedidos');
+```
+
+Arrastar um campo para o canvas cria o elemento **já vinculado** — o usuário
+não digita o nome da coluna, que é onde mora metade dos erros num relatório:
+
+- campo do nó atual → um `field` com `fieldName` preenchido;
+- campo de um ancestral → um `label` com `{{parent.campo}}`, porque é assim que
+  o motor de expressões o alcança.
+
+Os campos de um nó vêm de `fields` (o backend informou), de `sampleRow`, ou
+como último recurso são extraídos do `SELECT`. Com `SELECT *` a lista fica
+vazia de propósito: devolver nomes adivinhados seria pior que não devolver
+nada — o usuário confiaria num campo que não existe.
+
+## Subrelatórios: abas de design
+
+Cada subreport tem seu próprio design. As abas no topo do canvas navegam entre
+eles, em qualquer profundidade:
+
+```
+Principal   ↳ OFFER   ↳ OFFER_FEE
+```
+
+Duplo clique num subreport no canvas também entra no design dele. Ao trocar de
+aba, o explorador de campos passa a mostrar o escopo daquele nó — os campos
+dele **e** os dos ancestrais, exatamente o que o motor enxerga.
+
+Apagar um subreport fecha a aba dele automaticamente, voltando para o ancestral
+mais próximo que ainda exista.
+
+```ts
+designer.openDesign(['sub-offer', 'sub-fee']);  // entra
+designer.openDesign([]);                        // volta ao principal
+designer.designPath;                            // onde estou
+```
+
+## Editor de expressão
+
+Funções de apoio para montar um campo de expressão com destaque e autocomplete
+— um `<textarea>` basta, sem editor de código pesado:
+
+```ts
+import { highlight, suggest, applySuggestion, validateSyntax } from '@treeport/designer';
+
+highlight('Total: {{valor}}');   // segmentos text/delimiter/expression
+suggest(texto, cursor, { fields: designer.availableFields });
+applySuggestion(texto, cursor, escolhida);
+validateSyntax('{{IF(a, 1}}');   // ["Parênteses desbalanceados..."]
+```
+
+O autocomplete só age dentro de `{{ }}` — no texto literal o usuário escreve
+prosa e uma lista aparecendo atrapalharia. Campos vêm antes de funções, e os
+de ancestrais já entram com o prefixo `parent.` correto.
+
+## Integração com o backend
+
+O Designer nunca fala com o banco — só com as rotas que o seu backend expõe
+(seção 7.5.3 do brief):
+
+```ts
+import { TreeportApiClient } from '@treeport/designer';
+
+const api = new TreeportApiClient({
+  baseUrl: '/api',
+  // função, não objeto: o token expira, e congelá-lo na inicialização
+  // quebraria as chamadas depois de um tempo
+  headers: () => ({ Authorization: `Bearer ${sessao.token}` }),
+});
+
+designer.dataSource = await api.getDataSource('pedidos');
+designer.template = await api.getTemplate('t1');
+
+// salvar
+await api.saveTemplate(designer.template);
+
+// pré-visualizar, inclusive mudanças ainda não salvas
+const url = await api.previewUrl('t1', designer.template);
+iframe.src = url;   // o browser já sabe exibir PDF
+```
+
+### Do lado do servidor
+
+O `@treeport/core` traz os handlers prontos, framework-neutros:
+
+```ts
+import { createRouteHandlers } from '@treeport/core';
+
+const handlers = createRouteHandlers({ store: meuStore, executor });
+
+app.get('/report-templates/:id', requireAuth, async (req, res) => {
+  const r = await handlers.getTemplate({ params: req.params });
+  res.status(r.status).json(r.body);
+});
+
+app.post('/report-templates/:id/preview', requireAuth, async (req, res) => {
+  const r = await handlers.previewTemplate({ params: req.params, body: req.body });
+  if (r.contentType) res.type(r.contentType).status(r.status).send(Buffer.from(r.body));
+  else res.status(r.status).json(r.body);
+});
+```
+
+Autenticação é **do host** (`requireAuth` acima): os handlers recebem
+requisições já autorizadas. Persistência também — você implementa
+`TemplateStore` contra o seu banco. Ver [storage.md](storage.md).
+
+### Importar e exportar arquivo
+
+```ts
+import { exportTemplate, importTemplate } from '@treeport/designer';
+
+const json = exportTemplate(designer.template);   // formatado, para o Git
+designer.template = importTemplate(conteudoDoArquivo);
+```
+
+Útil para versionar templates ou movê-los entre ambientes sem passar pelo
+servidor.
 
 ## Personalizando a aparência
 

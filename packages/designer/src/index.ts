@@ -51,5 +51,56 @@ export {
 } from './model/units.js';
 export type { RulerUnit } from './model/units.js';
 
+export {
+  describeTree,
+  describeNode,
+  fieldsOf,
+  extractFieldsFromSql,
+  findNode,
+  pathToNode,
+  fieldsInScope,
+  fieldReference,
+  fieldExpression,
+  parameterFields,
+} from './model/field-explorer.js';
+export type { ExplorerNode, ExplorerField } from './model/field-explorer.js';
+
+export {
+  resolveDesign,
+  resolveSubreportElement,
+  listDesignTabs,
+  samePath,
+  pathKey,
+  nearestValidPath,
+  DesignPathError,
+} from './model/subreport-tabs.js';
+export type { DesignPath, DesignTab } from './model/subreport-tabs.js';
+
+export {
+  highlight,
+  suggest,
+  applySuggestion,
+  insertPlaceholder,
+  isInsideExpression,
+  wordAtCursor,
+  validateSyntax,
+  BUILTIN_FUNCTION_NAMES,
+} from './model/expression-editor.js';
+export type {
+  Suggestion,
+  SuggestionKind,
+  HighlightSegment,
+  SuggestOptions,
+  ApplyResult,
+} from './model/expression-editor.js';
+
+export {
+  TreeportApiClient,
+  ApiError,
+  exportTemplate,
+  importTemplate,
+} from './model/api-client.js';
+export type { ApiClientOptions, TemplateSummary } from './model/api-client.js';
+
 // --- o Web Component ---
 export { TreeportDesigner } from './report-designer.js';

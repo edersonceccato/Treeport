@@ -176,6 +176,28 @@
       const props = document.getElementById('props');
       const jsonOut = document.getElementById('json');
 
+      // árvore de dados: alimenta o explorador de campos (9.4)
+      designer.dataSource = {
+        id: 'pedidos',
+        name: 'Pedidos',
+        parameters: [{ name: 'pedidoId', type: 'int', nullable: false, testValue: 1 }],
+        root: {
+          id: 'PEDIDO',
+          name: 'Pedido',
+          sql: 'SELECT * FROM pedido',
+          fields: ['numero', 'cliente', 'emitido', 'total'],
+          children: [
+            {
+              id: 'ITEM',
+              name: 'Itens',
+              sql: 'SELECT * FROM item',
+              fields: ['descricao', 'quantidade', 'valor'],
+              linkFields: { parentField: 'id', childField: 'pedidoId' },
+            },
+          ],
+        },
+      };
+
       // um template de partida, para não abrir vazio
       designer.template = {
         id: 'demo',
@@ -239,6 +261,33 @@
                 height: 14,
                 content: "R$ {{FORMAT(total, '#,##0.00')}}",
                 style: { align: 'right' },
+              },
+              {
+                id: 'itens',
+                type: 'subreport',
+                x: 12,
+                y: 24,
+                width: 490,
+                height: 14,
+                dataSourceNodeId: 'ITEM',
+                canGrow: true,
+                template: {
+                  details: {
+                    height: 13,
+                    elements: [
+                      {
+                        id: 'desc',
+                        type: 'label',
+                        x: 0,
+                        y: 0,
+                        width: 300,
+                        height: 11,
+                        content: '{{quantidade}}x {{descricao}}',
+                        style: { fontSize: 9 },
+                      },
+                    ],
+                  },
+                },
               },
             ],
           },

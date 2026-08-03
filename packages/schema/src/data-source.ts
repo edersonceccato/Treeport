@@ -60,6 +60,19 @@ export interface DataSourceNode {
   skipWhenNoRecords?: boolean;
   /** Details deste nó (recursivo, profundidade arbitrária). */
   children?: DataSourceNode[];
+  /**
+   * Nomes das colunas que a query devolve.
+   *
+   * Opcional e ignorado pelo motor de renderização — serve ao explorador de
+   * campos do Designer, que precisa listar o que existe sem executar a query.
+   * O backend costuma preencher a partir do schema do banco.
+   */
+  fields?: string[];
+  /**
+   * Uma linha de amostra, usada pelo Designer quando `fields` não foi
+   * informado. As chaves viram a lista de campos.
+   */
+  sampleRow?: DataRow;
 }
 
 /** Tag de contexto de uso (Anexo B): em quais telas o relatório aparece. */

@@ -85,6 +85,18 @@ export {
   TemplateNotFoundError,
 } from './control/template-registry.js';
 
+// --- Rotas do contrato Designer<->backend (seção 7.5.3) ---
+export { createRouteHandlers } from './routes/handlers.js';
+export type {
+  RouteRequest,
+  RouteResponse,
+  RouteHandler,
+  RouteHandlers,
+  RouteHandlersOptions,
+  TemplateStore,
+  TemplateSummary,
+} from './routes/handlers.js';
+
 // --- Renderização PDF ---
 export { renderReport, loadFonts } from './render/renderer.js';
 export type { RenderOptions } from './render/renderer.js';

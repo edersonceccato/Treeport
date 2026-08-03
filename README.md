@@ -22,7 +22,7 @@ O que diferencia:
 
 ## Status
 
-🚧 Em construção, por fases. **Fase 9 em andamento: designer visual (9.1–9.3).**
+🚧 Em construção, por fases. **Fase 9 concluída: designer visual completo.**
 
 | Fase | Escopo | Status |
 |---|---|---|
@@ -34,7 +34,7 @@ O que diferencia:
 | 6 | Barcode e QRCode | ✅ |
 | 7 | Metadados de controle (`__block`, `__templateId`) e contexto | ✅ |
 | 8 | Adapters de banco reais (Postgres primeiro) | ✅ |
-| 9 | Designer visual web (Web Component) | 🟡 canvas, paleta e propriedades |
+| 9 | Designer visual web (Web Component) | ✅ |
 | 10 | Persistência e documentação final | ⬜ |
 
 ## Pacotes
