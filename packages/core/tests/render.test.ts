@@ -145,10 +145,38 @@ describe('renderReport', () => {
     const amount = findItem(page, '1,00')!;
     const name = findItem(page, 'X')!;
 
+    // x do template é relativo à área útil, então soma a margem esquerda (50)
     // a caixa do valor vai de x=220 a x=320; alinhado à direita, o texto
     // começa bem depois do início da caixa
-    expect(amount.x).toBeGreaterThan(280);
-    expect(name.x).toBeCloseTo(0, 0);
+    expect(amount.x).toBeGreaterThan(50 + 280);
+    expect(name.x).toBeCloseTo(50, 0);
+  });
+
+  it('respeita as margens laterais declaradas', async () => {
+    const bytes = await renderReport(
+      feeTemplate({ margins: { top: 40, right: 40, bottom: 40, left: 40 } }),
+      dataSet([{ name: 'Frete', amount: 1 }]),
+    );
+    const pdf = await inspectPdf(bytes);
+    const page = pdf.pages[0]!;
+
+    // nada pode encostar na borda física da folha
+    const menorX = Math.min(...page.items.map((i) => i.x));
+    expect(menorX).toBeCloseTo(40, 0);
+  });
+
+  it('conteúdo alinhado à direita não estoura a margem direita', async () => {
+    const bytes = await renderReport(
+      feeTemplate({ margins: { top: 40, right: 40, bottom: 40, left: 40 } }),
+      dataSet([{ name: 'Frete', amount: 1234567.89 }]),
+    );
+    const pdf = await inspectPdf(bytes);
+    const page = pdf.pages[0]!;
+
+    const limiteDireito = page.width - 40;
+    for (const item of page.items) {
+      expect(item.x).toBeLessThanOrEqual(limiteDireito);
+    }
   });
 
   it('quebra a página quando os detalhes não cabem mais', async () => {

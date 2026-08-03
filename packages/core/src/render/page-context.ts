@@ -130,6 +130,22 @@ export class PageContext {
     return this.height - templateY - elementHeight;
   }
 
+  /**
+   * Converte um X de template para o X do PDF.
+   *
+   * O `x` de um elemento é relativo à área útil da página (depois da margem
+   * esquerda), do mesmo jeito que o `y` é relativo ao topo útil. Sem somar a
+   * margem aqui, todo o conteúdo encostaria na borda física da folha.
+   */
+  toPdfX(templateX: number): number {
+    return this.margins.left + templateX;
+  }
+
+  /** Largura utilizável, já descontadas as duas margens laterais. */
+  get contentWidth(): number {
+    return this.width - this.margins.left - this.margins.right;
+  }
+
   // --- Primitivas de desenho, todas em coordenadas de template -------------
 
   async drawRect(opts: {
@@ -148,7 +164,7 @@ export class PageContext {
     if (!hasFill && !hasBorder) return;
 
     page.drawRectangle({
-      x: opts.x,
+      x: this.toPdfX(opts.x),
       y: this.toPdfY(opts.y, opts.height),
       width: opts.width,
       height: opts.height,
@@ -170,8 +186,8 @@ export class PageContext {
   }): Promise<void> {
     const page = await this.page();
     page.drawLine({
-      start: { x: opts.from.x, y: this.toPdfY(opts.from.y) },
-      end: { x: opts.to.x, y: this.toPdfY(opts.to.y) },
+      start: { x: this.toPdfX(opts.from.x), y: this.toPdfY(opts.from.y) },
+      end: { x: this.toPdfX(opts.to.x), y: this.toPdfY(opts.to.y) },
       thickness: opts.thickness ?? 1,
       color: parseColor(opts.color, rgb(0, 0, 0)),
     });
@@ -187,9 +203,9 @@ export class PageContext {
     const safe = sanitizeForStandardFont(text, opts.font);
 
     const textWidth = measure(safe, opts.font, opts.fontSize);
-    let x = opts.x;
-    if (opts.align === 'center') x = opts.x + (opts.width - textWidth) / 2;
-    else if (opts.align === 'right') x = opts.x + opts.width - textWidth;
+    let x = this.toPdfX(opts.x);
+    if (opts.align === 'center') x += (opts.width - textWidth) / 2;
+    else if (opts.align === 'right') x += opts.width - textWidth;
 
     // desce do topo da linha até o baseline (a altura da fonte acima da linha base)
     const baseline = this.toPdfY(opts.y) - opts.font.heightAtSize(opts.fontSize) * 0.8;
