@@ -49,14 +49,6 @@ export const PALETTE: PaletteItem[] = [
     defaultHeight: 0,
   },
   {
-    type: 'rect',
-    label: 'Retângulo',
-    icon: '▭',
-    hint: 'Moldura ou fundo',
-    defaultWidth: 160,
-    defaultHeight: 60,
-  },
-  {
     type: 'image',
     label: 'Imagem',
     icon: '🖼',
@@ -80,6 +72,22 @@ export const PALETTE: PaletteItem[] = [
     hint: 'QR Code — use uma caixa quadrada',
     defaultWidth: 80,
     defaultHeight: 80,
+  },
+  {
+    type: 'shape',
+    label: 'Forma',
+    icon: '◆',
+    hint: 'Retângulo, círculo, triângulo, estrela e outras',
+    defaultWidth: 120,
+    defaultHeight: 80,
+  },
+  {
+    type: 'aggregate',
+    label: 'Totalizador',
+    icon: '∑',
+    hint: 'Soma, contagem ou média de uma consulta',
+    defaultWidth: 140,
+    defaultHeight: 18,
   },
   {
     type: 'region',
@@ -179,7 +187,24 @@ function withTypeDefaults(
         elements: [],
         canGrow: true,
         autoHeight: true,
-        style: { borderColor: '#94a3b8', borderWidth: 1 },
+        style: { backgroundColor: '#f8fafc', borderColor: '#94a3b8', borderWidth: 1 },
+      };
+
+    case 'shape':
+      return {
+        ...base,
+        type,
+        shape: 'rectangle',
+        style: { backgroundColor: '#e2e8f0', borderColor: '#334155', borderWidth: 1 },
+      };
+
+    case 'aggregate':
+      return {
+        ...base,
+        type,
+        fn: 'sum',
+        format: '#,##0.00',
+        style: { fontSize: 11, bold: true, align: 'right' },
       };
   }
 }

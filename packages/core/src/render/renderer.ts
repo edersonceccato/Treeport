@@ -13,6 +13,7 @@ import { measureBandContent } from './measure.js';
 import type { FontSet, RenderElementContext } from './elements.js';
 import type { FormatOptions } from './format.js';
 import type { EvaluateOptions } from '../expressions/evaluate.js';
+import { createAggregateFunctions } from '../expressions/aggregates.js';
 import type { BarcodeRenderOptions } from './barcode.js';
 
 /**
@@ -67,6 +68,20 @@ export async function renderReport(
   // `sys.totalPages` só é conhecido depois de paginar. Renderizamos uma vez
   // para descobrir o total e, se algum elemento usa a variável, uma segunda
   // vez com o valor correto — é o mesmo truque que os motores clássicos usam.
+  // as agregações precisam da árvore inteira: um totalizador no rodapé soma
+  // linhas que estão em qualquer nó, não só na banda onde ele está
+  const aggregates = createAggregateFunctions({
+    rootRows: dataSet.rows,
+    currentNodeId: template.boundDataSourceNodeId,
+    currentRows: dataSet.rows,
+    knownNodeIds: collectNodeIds(dataSet.rows, template.boundDataSourceNodeId),
+  });
+
+  const expressionOptions: EvaluateOptions = {
+    ...options.expressionOptions,
+    functions: { ...aggregates, ...options.expressionOptions?.functions },
+  };
+
   const usesTotalPages = templateUsesTotalPages(template);
   let totalPagesHint = options.totalPagesHint ?? 1;
 
@@ -112,7 +127,7 @@ export async function renderReport(
     renderSubreport,
     ...(resolvedRow ? { resolvedRow } : {}),
     ...(options.formatOptions ? { formatOptions: options.formatOptions } : {}),
-    ...(options.expressionOptions ? { expressionOptions: options.expressionOptions } : {}),
+    expressionOptions,
     ...(options.barcodeOptions ? { barcodeOptions: options.barcodeOptions } : {}),
   });
 
@@ -154,7 +169,7 @@ export async function renderReport(
         ...(options.parameters ? { parameters: options.parameters } : {}),
       },
       ...(options.formatOptions ? { formatOptions: options.formatOptions } : {}),
-      ...(options.expressionOptions ? { expressionOptions: options.expressionOptions } : {}),
+      expressionOptions,
     });
 
     await placeDetail(ctx, detailHeight, headerHeight, footerHeight, async (y) =>
@@ -170,6 +185,26 @@ export async function renderReport(
   }
 
   return doc.save();
+}
+
+/**
+ * Ids de nó presentes no resultado, para as agregações distinguirem
+ * `COUNT('ITEM')` (um nó) de `COUNT('valor')` (um campo).
+ */
+function collectNodeIds(rows: ResolvedRow[], rootId: string): Set<string> {
+  const ids = new Set<string>([rootId]);
+
+  const walk = (current: ResolvedRow[]): void => {
+    for (const row of current) {
+      for (const [childId, children] of Object.entries(row.children)) {
+        ids.add(childId);
+        walk(children);
+      }
+    }
+  };
+
+  walk(rows);
+  return ids;
 }
 
 /** O template referencia `sys.totalPages` em algum lugar? */

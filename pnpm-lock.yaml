@@ -68,6 +68,9 @@ importers:
       '@treeport/schema':
         specifier: workspace:*
         version: link:../schema
+      bwip-js:
+        specifier: ^4.11.2
+        version: 4.11.2
       lit:
         specifier: ^3.3.3
         version: 3.3.3

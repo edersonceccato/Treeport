@@ -18,7 +18,26 @@ export interface ElementStyle {
   backgroundColor?: string;
   borderWidth?: number;
   borderColor?: string;
+  /** Estilo do traço da borda. Default: sólida. */
+  borderStyle?: 'solid' | 'dashed' | 'dotted';
+  /** Raio dos cantos, em pontos. Só vale para formas com canto reto. */
+  borderRadius?: number;
+  /** Família da fonte. Default: a padrão do documento. */
+  fontFamily?: FontFamily;
+  /** Espaçamento entre linhas, múltiplo do corpo da fonte. Default: 1.2. */
+  lineHeight?: number;
+  /** Alinhamento vertical dentro da caixa. Default: topo. */
+  verticalAlign?: 'top' | 'middle' | 'bottom';
 }
+
+/**
+ * Fontes disponíveis.
+ *
+ * São as 14 fontes padrão do PDF, que não exigem embutir arquivo nenhum —
+ * qualquer leitor de PDF já as tem. Fonte customizada exigiria enviar o
+ * arquivo .ttf junto do template, o que fica para depois.
+ */
+export type FontFamily = 'helvetica' | 'times' | 'courier';
 
 export interface BaseElement {
   id: string;
@@ -63,14 +82,38 @@ export interface FieldElement extends BaseElement {
 
 export interface ImageElement extends BaseElement {
   type: 'image';
-  /** Data URI, URL, ou expressão que resolve para uma delas. */
+  /**
+   * Data URI (`data:image/png;base64,...`), URL `http(s)`, ou expressão que
+   * resolva para uma delas.
+   *
+   * URL só é baixada se o host permitir explicitamente (`allowRemoteImages`)
+   * — um relatório que depende de download externo fica lento e frágil.
+   */
   source: string;
   fit?: 'contain' | 'cover' | 'fill';
 }
 
+/** Simbologias de código de barras suportadas. */
+export type BarcodeFormat =
+  | 'code128'
+  | 'code39'
+  | 'code93'
+  | 'ean13'
+  | 'ean8'
+  | 'upca'
+  | 'upce'
+  | 'itf14'
+  | 'interleaved2of5'
+  | 'codabar'
+  | 'msi'
+  | 'pharmacode'
+  | 'datamatrix'
+  | 'pdf417'
+  | 'azteccode';
+
 export interface BarcodeElement extends BaseElement {
   type: 'barcode';
-  format: 'code128' | 'ean13' | 'code39';
+  format: BarcodeFormat;
   /** Nome de campo direto ou expressão `{{...}}`. */
   valueExpression: string;
   /**
@@ -80,9 +123,29 @@ export interface BarcodeElement extends BaseElement {
   includeText?: boolean;
 }
 
+/**
+ * Tipo de conteúdo do QR.
+ *
+ * O QR em si não distingue tipos — quem interpreta é o app que lê. O que muda
+ * é a FORMATAÇÃO do texto codificado: um vCard tem uma sintaxe, um wifi outra.
+ * O designer monta essa sintaxe a partir de campos separados.
+ */
+export type QrContentKind = 'text' | 'url' | 'email' | 'phone' | 'sms' | 'wifi' | 'vcard' | 'geo';
+
 export interface QrCodeElement extends BaseElement {
   type: 'qrcode';
   valueExpression: string;
+  /** Como formatar o conteúdo. Default: `text` (codifica como veio). */
+  contentKind?: QrContentKind;
+  /**
+   * Nível de correção de erro. Mais alto tolera mais sujeira/logo por cima,
+   * ao custo de um código mais denso. Default: 'M'.
+   */
+  errorCorrection?: 'L' | 'M' | 'Q' | 'H';
+  /** Cor dos módulos (as partes escuras). Default: preto. */
+  foregroundColor?: string;
+  /** Cor de fundo. Default: branco — nunca transparente, senão fica ilegível. */
+  backgroundColor?: string;
 }
 
 export interface LineElement extends BaseElement {
@@ -92,6 +155,32 @@ export interface LineElement extends BaseElement {
 
 export interface RectElement extends BaseElement {
   type: 'rect';
+}
+
+/** Formas geométricas desenháveis. */
+export type ShapeKind =
+  | 'rectangle'
+  | 'ellipse'
+  | 'triangle'
+  | 'diamond'
+  | 'star'
+  | 'pentagon'
+  | 'hexagon'
+  | 'arrow';
+
+/**
+ * Uma forma geométrica.
+ *
+ * Substitui o `rect` como elemento genérico de desenho — `rect` continua no
+ * schema para não quebrar templates já salvos, mas o designer cria `shape`.
+ */
+export interface ShapeElement extends BaseElement {
+  type: 'shape';
+  shape: ShapeKind;
+  /** Pontas da estrela / lados do polígono, quando aplicável. */
+  points?: number;
+  /** Rotação em graus, no sentido horário. */
+  rotation?: number;
 }
 
 export interface TableColumn {
@@ -140,8 +229,40 @@ export interface RegionElement extends BaseElement {
   autoHeight?: boolean;
 }
 
+/** Operações de agregação sobre um nó da árvore de dados. */
+export type AggregateFunction = 'sum' | 'count' | 'avg' | 'min' | 'max';
+
+/**
+ * Totalizador: agrega um campo de um nó da árvore.
+ *
+ * Para contas entre fontes diferentes (média por cliente, por exemplo), use
+ * `expression` com as funções de agregação:
+ *
+ *   {{SUM('ITEM', 'valor') / COUNT('PEDIDO')}}
+ */
+export interface AggregateElement extends BaseElement {
+  type: 'aggregate';
+  /** Nó da árvore a agregar. Vazio = o nó do design atual. */
+  dataSourceNodeId?: string;
+  fn: AggregateFunction;
+  /** Campo a agregar. Dispensável em `count`. */
+  fieldName?: string;
+  /** Máscara de formatação do resultado. */
+  format?: string;
+  /**
+   * Expressão livre, que ganha de `fn`/`fieldName` quando presente.
+   * É o que permite combinar consultas diferentes numa conta só.
+   */
+  expression?: string;
+  /** Texto antes do valor, ex.: "Total: ". */
+  prefix?: string;
+  suffix?: string;
+}
+
 export type ReportElement =
   | RegionElement
+  | ShapeElement
+  | AggregateElement
   | LabelElement
   | FieldElement
   | ImageElement

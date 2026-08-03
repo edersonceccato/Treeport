@@ -102,7 +102,7 @@ export {
 } from './model/api-client.js';
 export type { ApiClientOptions, TemplateSummary } from './model/api-client.js';
 
-export { SNIPPETS, findSnippet } from './model/snippets.js';
+export { SNIPPETS, findSnippet, snippetGroups } from './model/snippets.js';
 export type { Snippet } from './model/snippets.js';
 
 export { snapToGuides, equalSpacingHints } from './model/smart-guides.js';
@@ -110,6 +110,22 @@ export type { Guide, SnapResult, SmartSnapOptions } from './model/smart-guides.j
 
 export { paginate, sampleRows } from './model/preview.js';
 export type { PreviewPage, PreviewBlock, PreviewOptions, PreviewResult } from './model/preview.js';
+
+export {
+  renderCode,
+  peekCode,
+  codeKey,
+  isCodeError,
+} from './model/code-preview.js';
+export type { CodeImage, CodeError, CodeResult } from './model/code-preview.js';
+
+export {
+  guessFieldKind,
+  suggestFormats,
+  allFormatGroups,
+  KIND_LABEL,
+} from './model/formats.js';
+export type { FieldKind, FormatSuggestion } from './model/formats.js';
 
 // --- o Web Component ---
 export { TreeportDesigner } from './report-designer.js';

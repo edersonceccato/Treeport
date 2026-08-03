@@ -1,6 +1,6 @@
 import type { PDFDocument, PDFFont, PDFImage, PDFPage } from 'pdf-lib';
-import { rgb } from 'pdf-lib';
-import type { PageMargins } from '@treeport/schema';
+import { rgb, degrees } from 'pdf-lib';
+import type { PageMargins, ShapeKind } from '@treeport/schema';
 import { parseColor } from './color.js';
 import { measure, sanitizeForStandardFont } from './text.js';
 
@@ -196,6 +196,76 @@ export class PageContext {
   }
 
   /**
+   * Desenha uma forma geométrica.
+   *
+   * Retângulo e elipse usam as primitivas do pdf-lib; as demais viram um path
+   * SVG, que é como o pdf-lib desenha contorno arbitrário. O path é montado em
+   * coordenadas de tela e desenhado a partir do canto superior esquerdo, com o
+   * eixo Y já invertido pelo próprio pdf-lib.
+   */
+  async drawShape(opts: {
+    shape: ShapeKind;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    points?: number;
+    rotation?: number;
+    fill?: string | undefined;
+    borderColor?: string | undefined;
+    borderWidth?: number | undefined;
+    borderRadius?: number | undefined;
+  }): Promise<void> {
+    const page = await this.page();
+    const borderWidth = opts.borderWidth ?? 0;
+
+    const paint = {
+      ...(opts.fill !== undefined ? { color: parseColor(opts.fill) } : {}),
+      ...(borderWidth > 0
+        ? {
+            borderColor: parseColor(opts.borderColor, rgb(0, 0, 0)),
+            borderWidth,
+          }
+        : {}),
+    };
+
+    // nada a pintar nem contornar
+    if (Object.keys(paint).length === 0) return;
+
+    if (opts.shape === 'rectangle') {
+      page.drawRectangle({
+        x: this.toPdfX(opts.x),
+        y: this.toPdfY(opts.y, opts.height),
+        width: opts.width,
+        height: opts.height,
+        ...(opts.rotation ? { rotate: degrees(-opts.rotation) } : {}),
+        ...paint,
+      });
+      return;
+    }
+
+    if (opts.shape === 'ellipse') {
+      page.drawEllipse({
+        // a elipse do pdf-lib é desenhada a partir do CENTRO
+        x: this.toPdfX(opts.x + opts.width / 2),
+        y: this.toPdfY(opts.y + opts.height / 2),
+        xScale: opts.width / 2,
+        yScale: opts.height / 2,
+        ...paint,
+      });
+      return;
+    }
+
+    const path = shapePath(opts.shape, opts.width, opts.height, opts.points);
+    page.drawSvgPath(path, {
+      x: this.toPdfX(opts.x),
+      y: this.toPdfY(opts.y),
+      ...(opts.rotation ? { rotate: degrees(-opts.rotation) } : {}),
+      ...paint,
+    });
+  }
+
+  /**
    * Desenha uma imagem (PNG ou JPEG) na caixa informada.
    *
    * `fit` decide o que fazer quando a proporção da imagem não bate com a da
@@ -320,4 +390,81 @@ function fitBox(
     offsetX: (box.width - width) / 2,
     offsetY: (box.height - height) / 2,
   };
+}
+
+/**
+ * Path SVG de cada forma, em coordenadas locais (origem no canto superior
+ * esquerdo, Y crescendo para baixo — o pdf-lib inverte ao desenhar).
+ */
+function shapePath(shape: ShapeKind, width: number, height: number, points = 5): string {
+  switch (shape) {
+    case 'triangle':
+      return `M ${width / 2} 0 L ${width} ${height} L 0 ${height} Z`;
+
+    case 'diamond':
+      return `M ${width / 2} 0 L ${width} ${height / 2} L ${width / 2} ${height} L 0 ${height / 2} Z`;
+
+    case 'arrow': {
+      // seta apontando para a direita, com a haste na metade da altura
+      const shaft = height * 0.3;
+      const headStart = width * 0.6;
+      return [
+        `M 0 ${(height - shaft) / 2}`,
+        `L ${headStart} ${(height - shaft) / 2}`,
+        `L ${headStart} 0`,
+        `L ${width} ${height / 2}`,
+        `L ${headStart} ${height}`,
+        `L ${headStart} ${(height + shaft) / 2}`,
+        `L 0 ${(height + shaft) / 2}`,
+        'Z',
+      ].join(' ');
+    }
+
+    case 'star':
+      return starPath(width, height, Math.max(3, points));
+
+    case 'pentagon':
+      return polygonPath(width, height, 5);
+
+    case 'hexagon':
+      return polygonPath(width, height, 6);
+
+    default:
+      return `M 0 0 L ${width} 0 L ${width} ${height} L 0 ${height} Z`;
+  }
+}
+
+/** Polígono regular inscrito na caixa, com um vértice no topo. */
+function polygonPath(width: number, height: number, sides: number): string {
+  const cx = width / 2;
+  const cy = height / 2;
+  const parts: string[] = [];
+
+  for (let i = 0; i < sides; i += 1) {
+    // -90° põe o primeiro vértice no topo, que é como se espera ver a forma
+    const angle = (i / sides) * Math.PI * 2 - Math.PI / 2;
+    const x = cx + Math.cos(angle) * cx;
+    const y = cy + Math.sin(angle) * cy;
+    parts.push(`${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`);
+  }
+
+  return `${parts.join(' ')} Z`;
+}
+
+/** Estrela: alterna entre o raio externo e um interno de ~38%. */
+function starPath(width: number, height: number, points: number): string {
+  const cx = width / 2;
+  const cy = height / 2;
+  const inner = 0.382; // proporção clássica da estrela de 5 pontas
+  const parts: string[] = [];
+
+  for (let i = 0; i < points * 2; i += 1) {
+    const angle = (i / (points * 2)) * Math.PI * 2 - Math.PI / 2;
+    const scale = i % 2 === 0 ? 1 : inner;
+    const x = cx + Math.cos(angle) * cx * scale;
+    const y = cy + Math.sin(angle) * cy * scale;
+    parts.push(`${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`);
+  }
+
+  return `${parts.join(' ')} Z`;
 }

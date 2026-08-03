@@ -1,7 +1,9 @@
 import type { PDFFont } from 'pdf-lib';
 import type {
+  AggregateElement,
   BarcodeElement,
   RegionElement,
+  ShapeElement,
   ElementStyle,
   FieldElement,
   ImageElement,
@@ -19,6 +21,7 @@ import { lineHeight, wrapText } from './text.js';
 import { interpolate, evaluateExpression } from '../expressions/interpolate.js';
 import { hasField } from '../expressions/evaluate.js';
 import { generateBarcode, generateQrCode, type BarcodeRenderOptions } from './barcode.js';
+import { formatQrContent } from './qr-content.js';
 import type { EvaluateOptions, ExpressionScope } from '../expressions/evaluate.js';
 
 /**
@@ -105,6 +108,12 @@ export async function renderElement(
 
     case 'rect':
       return renderRect(element, absoluteY, context);
+
+    case 'shape':
+      return renderShape(element, absoluteY, context);
+
+    case 'aggregate':
+      return renderText(resolveAggregateText(element, context), element, absoluteY, context);
 
     case 'line':
       return renderLine(element, absoluteY, context);
@@ -292,7 +301,16 @@ async function renderQrCode(
   const value = resolveCodeValue(element.valueExpression, context);
   if (value === '') return element.height;
 
-  const png = await generateQrCode(value, context.barcodeOptions ?? {});
+  const png = await generateQrCode(formatQrContent(element.contentKind, { value }), {
+    ...(context.barcodeOptions ?? {}),
+    ...(element.errorCorrection ? { errorCorrection: element.errorCorrection } : {}),
+    ...(element.foregroundColor
+      ? { foregroundColor: element.foregroundColor.replace(/^#/, '') }
+      : {}),
+    ...(element.backgroundColor
+      ? { backgroundColor: element.backgroundColor.replace(/^#/, '') }
+      : {}),
+  });
 
   await context.ctx.drawImage({
     data: png,
@@ -407,6 +425,78 @@ async function renderRegion(
   }
 
   return element.autoHeight ? Math.max(element.height, bottom) : element.height;
+}
+
+/**
+ * Desenha uma forma geométrica.
+ *
+ * Retângulo e elipse têm primitiva no pdf-lib; as demais viram um polígono
+ * (path SVG), que é como o pdf-lib desenha qualquer contorno.
+ */
+async function renderShape(
+  element: ShapeElement,
+  absoluteY: number,
+  context: RenderElementContext,
+): Promise<number> {
+  await context.ctx.drawShape({
+    shape: element.shape,
+    x: element.x,
+    y: absoluteY,
+    width: element.width,
+    height: element.height,
+    ...(element.points === undefined ? {} : { points: element.points }),
+    ...(element.rotation === undefined ? {} : { rotation: element.rotation }),
+    fill: element.style?.backgroundColor,
+    borderColor: element.style?.borderColor,
+    borderWidth: element.style?.borderWidth,
+    borderRadius: element.style?.borderRadius,
+  });
+
+  return element.height;
+}
+
+/**
+ * Texto de um totalizador.
+ *
+ * `expression` ganha de `fn`/`fieldName` quando presente — é o que permite
+ * combinar consultas diferentes numa conta só.
+ */
+function resolveAggregateText(
+  element: AggregateElement,
+  context: RenderElementContext,
+): string {
+  const scope = resolveScope(context);
+  const options = context.expressionOptions ?? {};
+
+  const expression =
+    element.expression?.trim() ||
+    buildAggregateExpression(element.fn, element.dataSourceNodeId, element.fieldName);
+
+  let value: unknown;
+  try {
+    value = evaluateExpression(expression, scope, options);
+  } catch {
+    // um totalizador que não resolve não deve derrubar o relatório inteiro
+    value = null;
+  }
+
+  const formatted = formatValue(value, element.format, context.formatOptions ?? {});
+  return `${element.prefix ?? ''}${formatted}${element.suffix ?? ''}`;
+}
+
+/** Monta a chamada de agregação a partir dos campos do elemento. */
+function buildAggregateExpression(
+  fn: AggregateElement['fn'],
+  nodeId: string | undefined,
+  fieldName: string | undefined,
+): string {
+  const name = { sum: 'SUM', count: 'COUNT', avg: 'AVG', min: 'MINOF', max: 'MAXOF' }[fn];
+
+  const args = [nodeId, fieldName]
+    .filter((a): a is string => a !== undefined && a !== '')
+    .map((a) => `'${a}'`);
+
+  return `${name}(${args.join(', ')})`;
 }
 
 async function renderRect(

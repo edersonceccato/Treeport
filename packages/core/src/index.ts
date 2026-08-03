@@ -63,6 +63,13 @@ export type { ExpressionFunction } from './expressions/functions.js';
 
 export type { ExpressionNode } from './expressions/ast.js';
 
+export {
+  createAggregateFunctions,
+  collectRows,
+  AGGREGATE_FUNCTION_NAMES,
+} from './expressions/aggregates.js';
+export type { AggregateContext } from './expressions/aggregates.js';
+
 // --- Metadados de controle e contexto (Anexo A e B) ---
 export {
   generate,
@@ -121,7 +128,10 @@ export {
   generateQrCode,
   BarcodeGenerationError,
 } from './render/barcode.js';
-export type { BarcodeFormat, BarcodeRenderOptions } from './render/barcode.js';
+export type { BarcodeFormat, BarcodeRenderOptions, QrRenderOptions } from './render/barcode.js';
+export { BARCODE_IDS, TWO_DIMENSIONAL } from './render/barcode.js';
+export { formatQrContent, QR_CONTENT_FIELDS, QR_VALUE_LABEL } from './render/qr-content.js';
+export type { QrContentParts } from './render/qr-content.js';
 
 export { formatValue, formatDate, formatNumber } from './render/format.js';
 export type { FormatOptions } from './render/format.js';

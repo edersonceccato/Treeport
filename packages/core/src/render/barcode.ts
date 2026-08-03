@@ -13,14 +13,38 @@ import type { BarcodeElement, QrCodeElement } from '@treeport/schema';
  * exigiria reimplementar as ~100 simbologias.
  */
 
-/** Simbologias suportadas, mapeadas para o identificador do bwip-js. */
-const BARCODE_IDS = {
+/**
+ * Simbologias suportadas, mapeadas para o identificador do bwip-js.
+ *
+ * Cobre as lineares mais usadas em logística e varejo, mais as 2D
+ * (DataMatrix, PDF417, Aztec) que aparecem em documento fiscal e etiqueta.
+ */
+export const BARCODE_IDS = {
   code128: 'code128',
-  ean13: 'ean13',
   code39: 'code39',
+  code93: 'code93',
+  ean13: 'ean13',
+  ean8: 'ean8',
+  upca: 'upca',
+  upce: 'upce',
+  itf14: 'itf14',
+  interleaved2of5: 'interleaved2of5',
+  codabar: 'rationalizedCodabar',
+  msi: 'msi',
+  pharmacode: 'pharmacode',
+  datamatrix: 'datamatrix',
+  pdf417: 'pdf417',
+  azteccode: 'azteccode',
 } as const;
 
 export type BarcodeFormat = keyof typeof BARCODE_IDS;
+
+/** Simbologias 2D: quadradas, não devem ser esticadas na largura. */
+export const TWO_DIMENSIONAL: ReadonlySet<string> = new Set([
+  'datamatrix',
+  'azteccode',
+  'qrcode',
+]);
 
 /** Erro ao gerar um código, já com o valor que causou o problema. */
 export class BarcodeGenerationError extends Error {
@@ -99,20 +123,34 @@ export async function generateBarcode(
   }
 }
 
+export interface QrRenderOptions extends BarcodeRenderOptions {
+  /**
+   * Correção de erro: L(7%) M(15%) Q(25%) H(30%).
+   * Mais alto tolera sujeira e logo por cima, mas deixa o código mais denso.
+   */
+  errorCorrection?: 'L' | 'M' | 'Q' | 'H';
+  /** Cor dos módulos escuros, em hex sem "#". Default: preto. */
+  foregroundColor?: string;
+}
+
 /** Gera o PNG de um QR Code. */
 export async function generateQrCode(
   value: string,
-  options: BarcodeRenderOptions = {},
+  options: QrRenderOptions = {},
 ): Promise<Uint8Array> {
   try {
+    // `eclevel` existe no bwip-js mas falta na tipagem publicada dele;
+    // verificado em runtime (L gera 216px e H 280px para o mesmo conteúdo)
     const png = await toBuffer({
       bcid: 'qrcode',
       text: value,
       scale: options.scale ?? 4,
+      barcolor: options.foregroundColor ?? '000000',
       backgroundcolor: options.backgroundColor ?? 'FFFFFF',
       paddingwidth: QUIET_ZONE,
       paddingheight: QUIET_ZONE,
-    });
+      eclevel: options.errorCorrection ?? 'M',
+    } as unknown as Parameters<typeof toBuffer>[0]);
     return new Uint8Array(png);
   } catch (err) {
     throw new BarcodeGenerationError(
@@ -131,25 +169,42 @@ export async function generateQrCode(
  * quebraria por um detalhe de formatação do dado.
  */
 function normalizeValue(format: BarcodeFormat, value: string): string {
-  if (format !== 'ean13') return value;
+  // simbologias puramente numéricas: limpa separadores e ajusta o tamanho
+  const numeric: Partial<Record<BarcodeFormat, number>> = {
+    ean13: 12,
+    ean8: 7,
+    upca: 11,
+    upce: 7,
+    itf14: 13,
+  };
+
+  const expected = numeric[format];
+  if (expected === undefined) return value;
 
   const digits = value.replace(/\D/g, '');
-  // 12 dígitos: o bwip-js calcula o dígito verificador sozinho
-  if (digits.length === 12 || digits.length === 13) return digits;
-  if (digits.length < 12) return digits.padStart(12, '0');
-  return digits.slice(0, 13);
+  // o bwip-js calcula o dígito verificador quando falta o último
+  if (digits.length === expected || digits.length === expected + 1) return digits;
+  if (digits.length < expected) return digits.padStart(expected, '0');
+  return digits.slice(0, expected + 1);
 }
 
 /** Mensagem de erro do bwip-js costuma ser críptica; contextualiza. */
 function describeError(err: unknown, format: string): string {
   const raw = err instanceof Error ? err.message : String(err);
-  if (format === 'ean13') {
-    return `${raw} (EAN-13 exige 12 ou 13 dígitos numéricos)`;
-  }
-  if (format === 'code39') {
-    return `${raw} (Code 39 aceita A-Z, 0-9 e os símbolos - . $ / + % espaço)`;
-  }
-  return raw;
+  const dicas: Record<string, string> = {
+    ean13: 'EAN-13 exige 12 ou 13 dígitos numéricos',
+    ean8: 'EAN-8 exige 7 ou 8 dígitos numéricos',
+    upca: 'UPC-A exige 11 ou 12 dígitos numéricos',
+    upce: 'UPC-E exige 7 ou 8 dígitos numéricos',
+    itf14: 'ITF-14 exige 13 ou 14 dígitos numéricos',
+    code39: 'Code 39 aceita A-Z, 0-9 e os símbolos - . $ / + % espaço',
+    codabar: 'Codabar aceita 0-9 e - $ : / . +, entre letras A-D',
+    msi: 'MSI aceita apenas dígitos',
+    pharmacode: 'Pharmacode aceita um número entre 3 e 131070',
+  };
+
+  const dica = dicas[format];
+  return dica ? `${raw} (${dica})` : raw;
 }
 
 /** Tipos de elemento que geram imagem de código. */
