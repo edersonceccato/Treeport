@@ -529,3 +529,67 @@ describe('reordenar elementos', () => {
     expect(e.band('details')!.elements.map((x) => x.id)).toEqual(['c', 'a', 'b']);
   });
 });
+
+// --- quarta rodada de feedback --------------------------------------------
+
+describe('nomes automáticos e slug', () => {
+  it('numera por tipo', () => {
+    const e = new TemplateEditor(createEmptyTemplate());
+
+    const a = e.addElement('details', createElement('region', 0, 0));
+    const b = e.addElement('details', createElement('region', 0, 0));
+
+    expect(e.element(a)!.name).toBe('Região 1');
+    expect(e.element(b)!.name).toBe('Região 2');
+  });
+
+  it('a forma usa o nome da geometria, não "Forma"', () => {
+    const e = new TemplateEditor(createEmptyTemplate());
+    const id = e.addElement(
+      'details',
+      createElement('shape', 0, 0, { shape: 'star' } as never),
+    );
+
+    expect(e.element(id)!.name).toBe('Estrela 1');
+  });
+
+  it('gera um slug estável a partir do nome', () => {
+    const e = new TemplateEditor(createEmptyTemplate());
+    const id = e.addElement('details', createElement('region', 0, 0));
+
+    const slug = e.element(id)!.slug;
+    expect(slug).toBe('REGIAO_1');
+
+    // renomear NÃO muda o slug: é o que permite usá-lo em fórmulas
+    e.updateElement(id, { name: 'Outro nome' });
+    expect(e.element(id)!.slug).toBe(slug);
+  });
+});
+
+describe('regrupar mantém a posição (bug 8)', () => {
+  it('elemento que já estava numa região não é deslocado', () => {
+    const e = new TemplateEditor(createEmptyTemplate());
+
+    e.addElement('details', {
+      id: 'x',
+      type: 'label',
+      x: 120,
+      y: 140,
+      width: 50,
+      height: 12,
+      content: 'X',
+    });
+    const r1 = e.addElement(
+      'details',
+      createElement('region', 100, 100, { width: 200, height: 100 } as never),
+    );
+
+    e.groupIntoRegion(['x'], r1);
+    // 120-100 = 20, 140-100 = 40
+    expect(e.element('x')).toMatchObject({ x: 20, y: 40 });
+
+    // mover a região não mexe no filho
+    e.moveElement(r1, 50, 50);
+    expect(e.element('x')).toMatchObject({ x: 20, y: 40 });
+  });
+});

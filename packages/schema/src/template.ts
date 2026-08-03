@@ -37,7 +37,29 @@ export interface ElementStyle {
  * qualquer leitor de PDF já as tem. Fonte customizada exigiria enviar o
  * arquivo .ttf junto do template, o que fica para depois.
  */
-export type FontFamily = 'helvetica' | 'times' | 'courier';
+export type FontFamily =
+  // padrão do PDF: não exigem embutir arquivo
+  | 'helvetica'
+  | 'times'
+  | 'courier'
+  // exigem que o host registre a fonte na geração (ver docs/designer-ui.md)
+  | 'arial'
+  | 'georgia'
+  | 'verdana'
+  | 'tahoma'
+  | 'trebuchet'
+  | 'garamond'
+  | 'roboto'
+  | 'open-sans'
+  | 'lato'
+  | 'montserrat'
+  | 'inter'
+  | 'source-sans'
+  | 'nunito'
+  | 'poppins'
+  | 'merriweather'
+  | 'playfair'
+  | 'jetbrains-mono';
 
 export interface BaseElement {
   id: string;
@@ -60,8 +82,16 @@ export interface BaseElement {
   locked?: boolean;
   /** Oculto no designer E na geração do PDF. */
   hidden?: boolean;
-  /** Nome amigável, mostrado no painel de camadas. */
+  /** Nome amigável, mostrado no painel de camadas. Pode ser alterado. */
   name?: string;
+  /**
+   * Identificador estável para usar em fórmulas.
+   *
+   * Diferente de `name`, nunca muda — mesmo que o usuário renomeie o
+   * elemento. É o que permite referenciá-lo numa expressão sem que renomear
+   * quebre o cálculo.
+   */
+  slug?: string;
   /**
    * Regras que mudam o elemento conforme os dados (item 19 do feedback).
    *

@@ -6,6 +6,7 @@ import type {
   Template,
 } from '@treeport/schema';
 import { resolveDesign, nearestValidPath, type DesignPath } from './subreport-tabs.js';
+import { baseLabelFor } from './palette.js';
 
 /**
  * Edição do template, sem tocar em DOM.
@@ -331,6 +332,20 @@ export class TemplateEditor {
 
     const ids = targets.map((t) => t.id);
 
+    /**
+     * Origem atual de cada elemento.
+     *
+     * Um elemento que já está dentro de outra região guarda coordenada
+     * RELATIVA a ela. Sem somar a origem dessa região antes de subtrair a da
+     * nova, o resultado sai deslocado (bug 8).
+     */
+    const origens = new Map<string, { x: number; y: number }>();
+    for (const id of ids) {
+      const at = this.locate(id);
+      const parent = at?.parentRegionId ? this.element(at.parentRegionId) : undefined;
+      origens.set(id, { x: parent?.x ?? 0, y: parent?.y ?? 0 });
+    }
+
     this.commit((draft) => {
       const bands = this.designBands(draft);
 
@@ -338,14 +353,24 @@ export class TemplateEditor {
       const regionInDraft = findElementIn(bands, regionId);
       if (!regionInDraft || regionInDraft.type !== 'region') return;
 
+      // a origem da própria região de destino, se ela também estiver aninhada
+      const destinoAt = this.locate(regionId);
+      const destinoPai = destinoAt?.parentRegionId
+        ? this.element(destinoAt.parentRegionId)
+        : undefined;
+      const destinoX = regionInDraft.x + (destinoPai?.x ?? 0);
+      const destinoY = regionInDraft.y + (destinoPai?.y ?? 0);
+
       // Remove tudo de uma vez e só então insere. Localizar por índice a cada
       // passo não funcionaria: o primeiro splice invalida os índices seguintes.
       const removed = removeElementsIn(bands, new Set(ids));
 
       for (const element of removed) {
-        // absoluto -> relativo à região
-        element.x -= regionInDraft.x;
-        element.y -= regionInDraft.y;
+        const origem = origens.get(element.id) ?? { x: 0, y: 0 };
+
+        // relativo ao pai antigo -> absoluto -> relativo ao novo
+        element.x = element.x + origem.x - destinoX;
+        element.y = element.y + origem.y - destinoY;
         regionInDraft.elements.push(element);
       }
     });
@@ -463,13 +488,41 @@ export class TemplateEditor {
   addElement(band: BandName, element: ReportElement): string {
     const id = this.uniqueId(element.id);
 
+    // nome automático numerado e slug estável (item 14)
+    const name = element.name ?? this.nextName(element);
+    const slug = element.slug ?? slugify(name, id);
+
     this.commit((draft) => {
       const bands = this.designBands(draft);
       ensureBand(bands, band);
-      bands[band]!.elements.push({ ...element, id } as ReportElement);
+      bands[band]!.elements.push({ ...element, id, name, slug } as ReportElement);
     });
 
     return id;
+  }
+
+  /**
+   * Próximo nome livre para o tipo: "Região 1", "Região 2", "Estrela 1"…
+   *
+   * Conta os que já existem com aquele rótulo base, incluindo os que estão
+   * dentro de regiões, para o número não repetir.
+   */
+  nextName(element: { type: string; shape?: string }): string {
+    const base = baseLabelFor(element);
+    const usados = new Set<string>();
+
+    const walk = (elements: ReportElement[]): void => {
+      for (const e of elements) {
+        if (e.name) usados.add(e.name);
+        if (e.type === 'region') walk(e.elements);
+      }
+    };
+
+    for (const { band } of this.bands()) walk(band.elements);
+
+    let n = 1;
+    while (usados.has(`${base} ${n}`)) n += 1;
+    return `${base} ${n}`;
   }
 
   removeElement(elementId: string): boolean {
@@ -693,6 +746,23 @@ function ensureBand(bands: BandSet, name: BandName): void {
     return;
   }
   bands[name] ??= { height: name === 'header' ? 60 : 30, elements: [] };
+}
+
+/**
+ * Slug estável a partir do nome.
+ *
+ * Serve para referenciar o elemento numa fórmula sem que renomeá-lo quebre o
+ * cálculo — por isso é gerado uma vez e nunca mais muda.
+ */
+function slugify(name: string, fallback: string): string {
+  const slug = name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase();
+
+  return slug || fallback.toUpperCase();
 }
 
 /** Cópia profunda via JSON: o template é dado puro, sem funções nem datas. */

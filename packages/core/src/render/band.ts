@@ -33,12 +33,15 @@ export async function renderBand(
   // altura que cada elemento realmente ocupou, para o posicionamento relativo
   const used_: Record<string, number> = {};
   const drawnY: Record<string, number> = {};
+  /** Sobre qual base cada elemento foi empilhado, para o próximo ir abaixo. */
+  const stackedOn: Record<string, string> = {};
 
   for (const element of ordered) {
     // posição relativa: quando o elemento de referência não desenhou nada,
     // este sobe e ocupa o lugar dele em vez de deixar um buraco (item 18)
-    const relative = resolveRelativeY(element, used_, drawnY);
+    const relative = resolveRelativeY(element, used_, drawnY, stackedOn);
     const baseY = relative ?? element.y;
+    if (element.relativeTo) stackedOn[element.id] = element.relativeTo.elementId;
 
     const elementY = absoluteY + baseY + offset;
     const used = await renderElement(element, elementY, context);
@@ -109,6 +112,7 @@ function resolveRelativeY(
   element: ReportElement,
   usedHeights: Record<string, number>,
   drawnY: Record<string, number>,
+  stackedOn: Record<string, string>,
 ): number | undefined {
   const relative = element.relativeTo;
   if (!relative) return undefined;
@@ -120,7 +124,20 @@ function resolveRelativeY(
   // colocação à direita não muda o Y; só a de baixo interessa aqui
   if (relative.placement === 'right') return refY;
 
-  return refY + refHeight + (relative.gap ?? 0);
+  /**
+   * Empilha DEPOIS do último já colocado sobre a mesma base (bug 4).
+   *
+   * Sem isso, dois elementos relativos ao mesmo bloco cairiam ambos logo
+   * abaixo dele e ficariam sobrepostos.
+   */
+  const base = Math.max(
+    refY + refHeight,
+    ...Object.entries(drawnY)
+      .filter(([id]) => stackedOn[id] === relative.elementId)
+      .map(([id, y]) => y + (usedHeights[id] ?? 0)),
+  );
+
+  return base + (relative.gap ?? 0);
 }
 
 /** Opções de renderização de uma banda. */

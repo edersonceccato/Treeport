@@ -107,6 +107,44 @@ export const PALETTE: PaletteItem[] = [
   },
 ];
 
+/**
+ * Rótulo base de cada tipo, para o nome automático (item 14).
+ * A forma usa o nome da geometria, não "Forma".
+ */
+export const TYPE_LABELS: Record<string, string> = {
+  label: 'Texto',
+  field: 'Campo',
+  line: 'Linha',
+  rect: 'Retângulo',
+  image: 'Imagem',
+  barcode: 'Código de barras',
+  qrcode: 'QR Code',
+  region: 'Região',
+  subreport: 'Subrelatório',
+  aggregate: 'Totalizador',
+  table: 'Tabela',
+};
+
+/** Nome de cada forma, para o rótulo automático refletir a geometria. */
+export const SHAPE_LABELS: Record<string, string> = {
+  rectangle: 'Retângulo',
+  ellipse: 'Círculo',
+  triangle: 'Triângulo',
+  diamond: 'Losango',
+  star: 'Estrela',
+  pentagon: 'Pentágono',
+  hexagon: 'Hexágono',
+  arrow: 'Seta',
+};
+
+/** Rótulo base de um elemento: usa a forma quando for `shape`. */
+export function baseLabelFor(element: { type: string; shape?: string }): string {
+  if (element.type === 'shape') {
+    return SHAPE_LABELS[element.shape ?? 'rectangle'] ?? 'Forma';
+  }
+  return TYPE_LABELS[element.type] ?? 'Elemento';
+}
+
 export function paletteItem(type: PaletteItemType): PaletteItem | undefined {
   return PALETTE.find((item) => item.type === type);
 }

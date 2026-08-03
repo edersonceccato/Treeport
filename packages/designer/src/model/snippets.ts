@@ -370,13 +370,15 @@ export const SNIPPETS: Snippet[] = [
       x,
       y,
       width: 220,
-      height: 36,
+      height: 34,
       elements: [
+        // o traço fica no topo da região e o rótulo logo abaixo, ambos
+        // dentro dos limites dela (bug 5)
         {
           id: id('traco'),
           type: 'line',
           x: 0,
-          y: 16,
+          y: 18,
           width: 220,
           height: 0,
           orientation: 'horizontal',

@@ -112,6 +112,8 @@ com a altura de cada uma etiquetada à direita.
 | Renomear | Duplo clique na camada, ou botão direito → Renomear |
 | Mover entre bandas | Botão direito → Mover para o cabeçalho/detalhe/rodapé |
 | Girar uma forma | Arraste a alça acima dela (Shift trava de 15 em 15°) |
+| Copiar e colar | Ctrl/Cmd+C e Ctrl/Cmd+V |
+| Mover entre bandas | Arraste para a outra banda, ou use o menu |
 | Selecionar | Clique no elemento |
 | Selecionar vários | Shift + clique |
 | Mover | Arraste, ou use as setas |
@@ -171,6 +173,25 @@ o layout sem gerar PDF nem precisar de servidor.
 
 Não é o PDF final — fontes do browser e do pdf-lib diferem um pouco. Para o
 resultado exato, use `POST /report-templates/:id/preview`.
+
+## Nomes e identificadores
+
+Todo elemento nasce com um nome numerado por tipo — "Região 1", "Estrela 2",
+"Texto 3" — e com um **slug** estável, gerado a partir desse nome.
+
+A diferença importa: o **nome** é livre e você pode mudar quando quiser; o
+**slug** nunca muda. É ele que serve para referenciar o elemento numa fórmula,
+de modo que renomear não quebre o cálculo.
+
+## Fontes
+
+As três primeiras (Helvetica, Times, Courier) são as padrão do PDF: não exigem
+arquivo nenhum e funcionam em qualquer leitor.
+
+As demais (Arial, Georgia, Roboto, Inter, Montserrat e outras) precisam que o
+**backend registre a fonte** na geração — o designer mostra a mais parecida
+enquanto você desenha, mas o PDF final só terá a fonte se ela estiver
+disponível no servidor. Sem isso, o motor cai na fonte padrão.
 
 ## Regras condicionais
 
