@@ -17,16 +17,18 @@ O que diferencia:
   igual em React, Vue, Angular, Next.js ou HTML puro.
 - **Subreports aninhados em profundidade livre**, que é o que falta na maioria
   das libs de PDF em JS.
+- **Campos calculados** com expressões `{{VALOR_A + VALOR_B}}`, avaliadas por um
+  parser próprio — sem `eval()`, porque templates vêm do banco.
 
 ## Status
 
-🚧 Em construção, por fases. **Fase 2 concluída: já gera PDF.**
+🚧 Em construção, por fases. **Fase 3 concluída: labels calculados.**
 
 | Fase | Escopo | Status |
 |---|---|---|
 | 1 | Árvore de dados, resolução master/detail, parâmetros, `Executor` | ✅ |
 | 2 | Renderização PDF básica (Header/Details/Footer, Label/Field) | ✅ |
-| 3 | Motor de expressões `{{...}}` | ⬜ |
+| 3 | Motor de expressões `{{...}}` | ✅ |
 | 4 | Subreports aninhados | ⬜ |
 | 5 | Auto-grow em cascata | ⬜ |
 | 6 | Barcode e QRCode | ⬜ |
@@ -154,15 +156,17 @@ pnpm typecheck       # TypeScript em modo estrito
 pnpm build           # compila os pacotes
 pnpm example:phase1  # árvore de dados de 3 níveis (imprime no console)
 pnpm example:phase2  # gera um PDF de 2 páginas em examples/output/
+pnpm example:phase3  # PDF com labels calculados por expressão
 ```
 
 ## Documentação
 
 - [Fonte de dados](docs/data-source.md) — árvore master/detail, parâmetros, adapters
 - [Template](docs/template-schema.md) — bandas, elementos, estilos, máscaras de formato
+- [Expressões](docs/expressions.md) — sintaxe `{{...}}`, funções, escopo `parent`
 
-Os demais documentos (`expressions.md`, `subreports.md`, `storage.md`,
-`designer-ui.md`) entram junto com as fases correspondentes.
+Os demais documentos (`subreports.md`, `storage.md`, `designer-ui.md`) entram
+junto com as fases correspondentes.
 
 ## Licença
 

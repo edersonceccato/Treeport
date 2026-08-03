@@ -10,6 +10,7 @@ import { PageContext } from './page-context.js';
 import { renderBand, measureBand } from './band.js';
 import type { FontSet, RenderElementContext } from './elements.js';
 import type { FormatOptions } from './format.js';
+import type { EvaluateOptions } from '../expressions/evaluate.js';
 
 /**
  * Motor de renderização (seção 7 do brief).
@@ -25,6 +26,13 @@ export interface RenderOptions {
   /** Metadados gravados no PDF. */
   title?: string;
   author?: string;
+  /**
+   * Parâmetros do relatório, visíveis nas expressões pelo nome.
+   * `generateReport` preenche isso sozinho a partir dos parâmetros validados.
+   */
+  parameters?: Record<string, unknown>;
+  /** Funções extras e modo estrito do motor de expressões. */
+  expressionOptions?: EvaluateOptions;
 }
 
 /** Margens padrão (~1,76cm), próximas do que um relatório A4 costuma usar. */
@@ -61,6 +69,22 @@ export async function renderReport(
    */
   const furnitureRow = dataSet.rows[0]?.data ?? {};
 
+  /** Monta o contexto de renderização para uma linha de dados. */
+  const contextFor = (
+    pageCtx: PageContext,
+    row: Record<string, unknown>,
+  ): RenderElementContext => ({
+    ctx: pageCtx,
+    fonts,
+    row,
+    scope: {
+      current: row,
+      ...(options.parameters ? { parameters: options.parameters } : {}),
+    },
+    ...(options.formatOptions ? { formatOptions: options.formatOptions } : {}),
+    ...(options.expressionOptions ? { expressionOptions: options.expressionOptions } : {}),
+  });
+
   const ctx = new PageContext({
     doc,
     width,
@@ -68,22 +92,16 @@ export async function renderReport(
     margins,
     onPageStart: async (pageCtx) => {
       if (!header) return;
-      await renderBand(header, margins.top, {
-        ctx: pageCtx,
-        fonts,
-        row: furnitureRow,
-        ...(options.formatOptions ? { formatOptions: options.formatOptions } : {}),
-      });
+      await renderBand(header, margins.top, contextFor(pageCtx, furnitureRow));
     },
     onPageEnd: async (pageCtx) => {
       if (!footer) return;
       // o rodapé fica ancorado na base da página, não no cursor
-      await renderBand(footer, height - margins.bottom - footerHeight, {
-        ctx: pageCtx,
-        fonts,
-        row: furnitureRow,
-        ...(options.formatOptions ? { formatOptions: options.formatOptions } : {}),
-      });
+      await renderBand(
+        footer,
+        height - margins.bottom - footerHeight,
+        contextFor(pageCtx, furnitureRow),
+      );
     },
   });
 
@@ -96,12 +114,7 @@ export async function renderReport(
 
   for (const row of dataSet.rows) {
     await placeDetail(ctx, row, detailHeight, headerHeight, footerHeight, async (y) =>
-      renderBand(details, y, {
-        ctx,
-        fonts,
-        row: row.data,
-        ...(options.formatOptions ? { formatOptions: options.formatOptions } : {}),
-      }),
+      renderBand(details, y, contextFor(ctx, row.data)),
     );
   }
 

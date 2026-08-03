@@ -40,6 +40,28 @@ export {
   inferFieldNames,
 } from './data-source/navigation.js';
 
+// --- Motor de expressões ---
+export {
+  interpolate,
+  evaluateExpression,
+  compileTemplate,
+  hasPlaceholders,
+  clearExpressionCache,
+} from './expressions/interpolate.js';
+export type { CompiledTemplate } from './expressions/interpolate.js';
+
+export { parseExpression } from './expressions/parser.js';
+export { tokenize, ExpressionSyntaxError } from './expressions/tokenizer.js';
+export type { Token, TokenType } from './expressions/tokenizer.js';
+
+export { evaluateNode, hasField, ExpressionEvaluationError } from './expressions/evaluate.js';
+export type { ExpressionScope, EvaluateOptions } from './expressions/evaluate.js';
+
+export { BUILTIN_FUNCTIONS, toBoolean, toNumber, toText } from './expressions/functions.js';
+export type { ExpressionFunction } from './expressions/functions.js';
+
+export type { ExpressionNode } from './expressions/ast.js';
+
 // --- Renderização PDF ---
 export { renderReport, loadFonts } from './render/renderer.js';
 export type { RenderOptions } from './render/renderer.js';

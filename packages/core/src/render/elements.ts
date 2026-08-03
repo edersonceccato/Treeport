@@ -10,6 +10,9 @@ import type {
 import type { PageContext } from './page-context.js';
 import { formatValue, type FormatOptions } from './format.js';
 import { lineHeight, wrapText } from './text.js';
+import { interpolate, evaluateExpression } from '../expressions/interpolate.js';
+import { hasField } from '../expressions/evaluate.js';
+import type { EvaluateOptions, ExpressionScope } from '../expressions/evaluate.js';
 
 /**
  * Desenho dos elementos individuais dentro de uma banda.
@@ -34,6 +37,13 @@ export interface RenderElementContext {
   /** A linha de dados atual, de onde os FieldElement leem seus valores. */
   row: Record<string, unknown>;
   formatOptions?: FormatOptions;
+  /**
+   * Escopo das expressões. Traz a corrente `current`/`parent`, que é o que
+   * permite um Label dentro de um subreport referenciar campos do nó pai.
+   * Quando ausente, é montado a partir de `row`.
+   */
+  scope?: ExpressionScope;
+  expressionOptions?: EvaluateOptions;
 }
 
 const DEFAULT_FONT_SIZE = 10;
@@ -57,7 +67,7 @@ export async function renderElement(
 ): Promise<number> {
   switch (element.type) {
     case 'label':
-      return renderText(resolveLabelText(element), element, absoluteY, context);
+      return renderText(resolveLabelText(element, context), element, absoluteY, context);
 
     case 'field':
       return renderText(resolveFieldText(element, context), element, absoluteY, context);
@@ -76,15 +86,71 @@ export async function renderElement(
   }
 }
 
-/** Texto de um Label. Expressões `{{...}}` entram na Fase 3. */
-function resolveLabelText(element: LabelElement): string {
-  return element.content;
+/**
+ * Texto de um Label, resolvendo expressões `{{...}}`.
+ *
+ * A interpolação roda sempre que o texto tem `{{}}`, mesmo sem
+ * `isExpression: true` — o flag existe para o Designer saber qual editor
+ * abrir, e exigir os dois seria uma pegadinha silenciosa (o usuário escreve
+ * a expressão, esquece o flag e vê `{{VALOR}}` impresso no PDF).
+ *
+ * `isExpression: true` com um texto SEM `{{}}` trata o conteúdo inteiro como
+ * expressão, que é como o Designer salva um label puramente calculado.
+ */
+function resolveLabelText(element: LabelElement, context: RenderElementContext): string {
+  const scope = resolveScope(context);
+
+  if (element.isExpression && !element.content.includes('{{')) {
+    return toDisplayText(
+      evaluateExpression(element.content, scope, context.expressionOptions ?? {}),
+    );
+  }
+
+  return interpolate(element.content, scope, context.expressionOptions ?? {});
 }
 
-/** Texto de um Field: valor da coluna, com a máscara aplicada. */
+/** Escopo das expressões: o informado, ou um montado a partir da linha. */
+export function resolveScope(context: RenderElementContext): ExpressionScope {
+  return context.scope ?? { current: context.row };
+}
+
+/** Converte o resultado de uma expressão para texto de exibição. */
+function toDisplayText(value: unknown): string {
+  return formatValue(value);
+}
+
+/**
+ * Texto de um Field: valor da coluna, com a máscara aplicada.
+ *
+ * `fieldName` normalmente é um nome de coluna cru (o caminho rápido, sem
+ * parser). Se vier com `{{}}`, é tratado como expressão — o que permite
+ * `{{parent.CLIENTE}}` num Field dentro de um subreport sem precisar trocar
+ * o elemento por um Label.
+ */
 function resolveFieldText(element: FieldElement, context: RenderElementContext): string {
-  const raw = context.row[element.fieldName];
+  const raw = element.fieldName.includes('{{')
+    ? evaluateExpression(
+        element.fieldName,
+        resolveScope(context),
+        context.expressionOptions ?? {},
+      )
+    : lookupField(element.fieldName, context);
+
   return formatValue(raw, element.format, context.formatOptions ?? {});
+}
+
+/**
+ * Busca o campo na linha atual e, se não achar, sobe a corrente de escopos.
+ * Sem isso, um Field dentro de um subreport não enxergaria os campos do pai —
+ * que é justamente o que o Report Builder de origem faz.
+ */
+function lookupField(fieldName: string, context: RenderElementContext): unknown {
+  if (hasField(context.row, fieldName)) return context.row[fieldName];
+
+  for (let s = context.scope; s; s = s.parent) {
+    if (hasField(s.current, fieldName)) return s.current[fieldName];
+  }
+  return undefined;
 }
 
 /**
